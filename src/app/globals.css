@@ -1,0 +1,84 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 100% 0 0; /* White */
+    --foreground: 0% 0 0; /* Black */
+
+    --card: 100% 0 0;
+    --card-foreground: 0% 0 0;
+
+    --popover: 100% 0 0;
+    --popover-foreground: 0% 0 0;
+
+    --primary: 0% 0 0;
+    --primary-foreground: 100% 0 0;
+
+    --secondary: 98.5% 0 0; /* oklch(0.985 0 0) - zinc-50 equivalent */
+    --secondary-foreground: 0% 0 0;
+
+    --muted: 98.5% 0 0;
+    --muted-foreground: 0% 0 0;
+
+    --accent: 98.5% 0 0;
+    --accent-foreground: 0% 0 0;
+
+    --destructive: 62.23% 0.259 28.96; /* Red */
+    --destructive-foreground: 100% 0 0;
+
+    --border: 0% 0 0 / 0.08;
+    --input: 0% 0 0 / 0.08;
+    --ring: 0% 0 0 / 0.1;
+
+    --radius: 0.5rem;
+
+    /* Custom OKLCH Colors from design.md */
+    --section-bg: 98.5% 0 0;
+    --success: 70.5% 0.15 150;
+    
+    --mode-auto: 55% 0.01 60;
+    --mode-fortune: 70% 0.1 290;
+    --mode-listen: 75% 0.08 165;
+    --mode-divination: 70% 0.1 290;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground font-light;
+    font-feature-settings: "rlig" 1, "calt" 1;
+  }
+}
+
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+
+  .custom-scrollbar {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(0, 0, 0, 0.1) rgba(0, 0, 0, 0.01);
+  }
+
+  .custom-scrollbar::-webkit-scrollbar {
+    width: 6px;
+  }
+
+  .custom-scrollbar::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  .custom-scrollbar::-webkit-scrollbar-thumb {
+    background: rgba(0, 0, 0, 0.15);
+    border-radius: 10px;
+  }
+
+  .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+    background: rgba(0, 0, 0, 0.25);
+  }
+}
