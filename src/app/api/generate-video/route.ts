@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 
 const ARK_API_KEY = process.env.ARK_API_KEY;
 const ARK_BASE_URL = process.env.ARK_BASE_GENVIDEO_URL || "https://ark.cn-beijing.volces.com/api/v3";
-const ARK_VIDEO_MODEL = process.env.ARK_VIDEO_MODEL || "doubao-seedance-1-5-pro-250106";
+const ARK_VIDEO_MODEL = process.env.ARK_VIDEO_MODEL || "doubao-seedance-1-5-pro-251215";
 
 /**
  * 创建视频生成任务 (POST)
