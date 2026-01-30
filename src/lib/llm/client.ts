@@ -129,7 +129,7 @@ export class LLMClient {
       const data = await response.json();
       return {
         status: data.status,
-        video_url: data.video_url,
+        video_url: data.content?.video_url || data.video_url,
       };
     } catch (error) {
       console.error('Query Video Status Error:', error);

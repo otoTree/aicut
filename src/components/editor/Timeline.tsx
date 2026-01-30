@@ -3,6 +3,7 @@
 import { useStore } from '@/store/useStore';
 import { cn } from '@/lib/utils';
 import { motion } from 'framer-motion';
+import Image from 'next/image';
 import { Video, Music, Type, GripVertical, Plus } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 
@@ -269,7 +270,7 @@ function TrackItem({
       <div className="flex h-full items-center px-2 gap-2">
         <Icon className="w-3 h-3 text-black/20 shrink-0" />
         {imageUrl && variant === 'video' && (
-          <img src={imageUrl} alt="" className="h-4 aspect-video object-cover rounded-sm" />
+          <Image src={imageUrl} alt="" width={32} height={18} className="h-4 w-auto aspect-video object-cover rounded-sm" />
         )}
         <span className="text-[9px] truncate font-light text-black/60">
           {label}

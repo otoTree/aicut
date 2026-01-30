@@ -6,14 +6,17 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Avatar } from '@/components/ui/avatar';
+import Image from 'next/image';
 import { Sparkles, Send, Loader2, Image as ImageIcon } from 'lucide-react';
 
 import { PromptFactory } from '@/lib/prompts';
 import { llmClient } from '@/lib/llm/client';
 import { extractJSON } from '@/lib/utils';
 
+import { db } from '@/lib/db-client';
+
 export function AIChat() {
-  const { messages, addMessage, skeleton, setSkeleton } = useStore();
+  const { messages, addMessage, skeleton, setSkeleton, setGeneratingSceneId } = useStore();
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
 
@@ -87,6 +90,8 @@ export function AIChat() {
         continue;
       }
 
+      setGeneratingSceneId(scene.id);
+
       try {
         console.log(`Starting video generation for scene ${i}...`);
         const { id: taskId } = await llmClient.generateVideo(scene.visualDescription, scene.imageUrl);
@@ -103,7 +108,11 @@ export function AIChat() {
             
             // 更新 Store 中的场景视频 URL
             setSkeleton(prev => {
-              if (!prev) return null;
+              if (!prev) {
+                console.error('Skeleton is null during video update');
+                return null;
+              }
+              console.log('Updating skeleton with video url for scene', i);
               const newScenes = [...prev.scenes];
               newScenes[i] = { ...newScenes[i], videoUrl: video_url };
               
@@ -115,10 +124,17 @@ export function AIChat() {
                   const newClips = [...newTracks[videoTrackIndex].clips];
                   const clipIndex = newClips.findIndex(c => c.id === `v-${scene.id}`);
                   if (clipIndex > -1) {
+                    console.log('Updating track clip', clipIndex, 'with video url');
                     newClips[clipIndex] = { ...newClips[clipIndex], videoUrl: video_url };
                     newTracks[videoTrackIndex] = { ...newTracks[videoTrackIndex], clips: newClips };
+                  } else {
+                    console.warn(`Clip not found for scene ${scene.id} in track 1`);
                   }
+                } else {
+                  console.warn('Track 1 not found');
                 }
+              } else {
+                console.warn('No tracks found in skeleton');
               }
               
               return { ...prev, scenes: newScenes, tracks: newTracks };
@@ -140,9 +156,27 @@ export function AIChat() {
       }
     }
 
+    setGeneratingSceneId(null);
+    
+    // 保存到历史记录
+    try {
+      const finalSkeleton = useStore.getState().skeleton;
+      if (finalSkeleton) {
+        await db.history.add({
+          timestamp: Date.now(),
+          prompt: finalSkeleton.theme || 'Untitled',
+          skeleton: finalSkeleton,
+          thumbnail: finalSkeleton.scenes[0]?.imageUrl
+        });
+        console.log('Saved to history');
+      }
+    } catch (error) {
+      console.error('Failed to save history:', error);
+    }
+
     addMessage({
       role: 'assistant',
-      content: '所有视频生成完毕！您可以在预览区查看完整效果。'
+      content: '所有视频生成完毕！您可以在预览区查看完整效果。已自动保存到历史记录。'
     });
   };
 
@@ -251,7 +285,15 @@ export function AIChat() {
                 {msg.content}
                 {msg.imageUrl && (
                   <div className="mt-2 rounded-lg overflow-hidden border border-black/5">
-                    <img src={msg.imageUrl} alt="Generated image" className="w-full h-auto object-cover" />
+                    <Image 
+                      src={msg.imageUrl} 
+                      alt="Generated image" 
+                      width={0} 
+                      height={0} 
+                      sizes="100vw" 
+                      style={{ width: '100%', height: 'auto' }}
+                      className="object-cover" 
+                    />
                   </div>
                 )}
                 {msg.type === 'action_request' && msg.actionType === 'start_video_generation' && (

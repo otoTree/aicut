@@ -33,7 +33,58 @@ export const PROMPT_TEMPLATES: Record<PromptType, PromptTemplate> = {
 - sceneId: 此镜头所处的场景 ID（从提供的场景设计中选择）。
 - cameraDesign: 镜头设计。包括镜头类型（如 Wide Shot）、运镜（如 Pan Right）、动作幅度、视点高度（如 Eye Level）、构图准则（如 Rule of Thirds）。
 - audioDesign: 音频设计。描述背景音效、环境音等。
-- voiceActor: 配音角色。指明谁在说话（如 Narrator 或具体角色名）。
+- voiceActor: 配音角色。必须从以下音色 ID 列表中选择最符合角色特征的音色 ID：
+  - 湾区大叔: zh_female_wanqudashu_moon_bigtts
+  - 呆萌川妹: zh_female_daimengchuanmei_moon_bigtts
+  - 广州德哥: zh_male_guozhoudege_moon_bigtts
+  - 北京小爷: zh_male_beijingxiaoye_moon_bigtts
+  - 浩宇小哥: zh_male_haoyuxiaoge_moon_bigtts
+  - 广西远舟: zh_male_guangxiyuanzhou_moon_bigtts
+  - 妹坨洁儿: zh_female_meituojieer_moon_bigtts
+  - 豫州子轩: zh_male_yuzhouzixuan_moon_bigtts
+  - 湾湾小何: zh_female_wanwanxiaohe_moon_bigtts
+  - 京腔侃爷/Harmony: zh_male_jingqiangkanye_moon_bigtts
+  - 少年梓辛/Brayan: zh_male_shaonianzixin_moon_bigtts
+  - 邻家女孩: zh_female_linjianvhai_moon_bigtts
+  - 渊博小叔: zh_male_yuanboxiaoshu_moon_bigtts
+  - 阳光青年: zh_male_yangguangqingnian_moon_bigtts
+  - 爽快思思/Skye: zh_female_shuangkuaisisi_moon_bigtts
+  - 温暖阿虎/Alvin: zh_male_wennuanahu_moon_bigtts
+  - 甜美小源: zh_female_tianmeixiaoyuan_moon_bigtts
+  - 清澈梓梓: zh_female_qingchezizi_moon_bigtts
+  - 解说小明: zh_male_jieshuoxiaoming_moon_bigtts
+  - 开朗姐姐: zh_female_kailangjiejie_moon_bigtts
+  - 邻家男孩: zh_male_linjiananhai_moon_bigtts
+  - 甜美悦悦: zh_female_tianmeiyueyue_moon_bigtts
+  - 心灵鸡汤: zh_female_xinlingjitang_moon_bigtts
+  - 灿灿: zh_female_cancan_mars_bigtts
+  - 知性女声: zh_female_zhixingnvsheng_mars_bigtts
+  - 清新女声: zh_female_qingxinnvsheng_mars_bigtts
+  - 魅力女友: zh_female_meilinvyou_moon_bigtts
+  - 深夜播客: zh_male_shenyeboke_moon_bigtts
+  - 柔美女友: zh_female_sajiaonvyou_moon_bigtts
+  - 撒娇学妹: zh_female_yuanqinvyou_moon_bigtts
+  - 高冷御姐: zh_female_gaolengyujie_moon_bigtts
+  - 傲娇霸总: zh_male_aojiaobazong_moon_bigtts
+  - 病弱少女: ICL_zh_female_bingruoshaonv_tob
+  - 活泼女孩: ICL_zh_female_huoponvhai_tob
+  - 和蔼奶奶: ICL_zh_female_heainainai_tob
+  - 邻居阿姨: ICL_zh_female_linjuayi_tob
+  - 温柔小雅: zh_female_wenrouxiaoya_moon_bigtts
+  - 东方浩然: zh_male_dongfanghaoran_moon_bigtts
+  - 天才童声: zh_male_tiancaitongsheng_mars_bigtts
+  - 奶气萌娃: zh_male_naiqimengwa_mars_bigtts
+  - 猴哥: zh_male_sunwukong_mars_bigtts
+  - 熊二: zh_male_xionger_mars_bigtts
+  - 佩奇猪: zh_female_peiqi_mars_bigtts
+  - 婆婆: zh_female_popo_mars_bigtts
+  - はるこ/Esmeralda: multi_female_shuangkuaisisi_moon_bigtts
+  - かずね/Javier or Álvaro: multi_male_jingqiangkanye_moon_bigtts
+  - あけみ: multi_female_gaolengyujie_moon_bigtts
+  - ひろし/Roberto: multi_male_wanqudashu_moon_bigtts
+  - Anna: en_female_anna_mars_bigtts
+  - 悬疑解说: zh_male_changtianyi_mars_bigtts
+  如果角色是旁白，请根据故事氛围选择合适的解说音色（如解说小明、悬疑解说等）。
 - dialogueContent: 对白内容。具体的台词或旁白。
 - duration: 建议持续时间（秒）。
 

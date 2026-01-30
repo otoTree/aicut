@@ -1,12 +1,16 @@
 'use client';
 
-import { useState } from 'react';
-import { useStore, Scene } from '@/store/useStore';
+import { useState, useEffect } from 'react';
+import Image from 'next/image';
+import { useStore, Scene, Character, SceneDesign, Clip } from '@/store/useStore';
 import { Textarea } from '@/components/ui/textarea';
+import { Input } from '@/components/ui/input';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Loader2, Plus, GripVertical, Trash2, Image as ImageIcon, User, Map, Film, BookOpen, Palette, Sparkles } from 'lucide-react';
+import { Loader2, Plus, GripVertical, Trash2, Image as ImageIcon, User, Map, Film, BookOpen, Palette, Sparkles, Volume2, Mic } from 'lucide-react';
+import { VOICES, getVoiceName } from '@/lib/tts/voices';
 import { cn } from '@/lib/utils';
 import { llmClient } from '@/lib/llm/client';
+import { db } from '@/lib/db-client';
 
 const STEPS = [
   { id: 0, label: '故事概述', icon: BookOpen },
@@ -20,6 +24,68 @@ export function SkeletonEditor() {
   const { skeleton, isGenerating, setSkeleton, currentStep, setCurrentStep } = useStore();
   const [generatingIds, setGeneratingIds] = useState<Set<string>>(new Set());
   const [generatingVideoIds, setGeneratingVideoIds] = useState<Set<string>>(new Set());
+  const [generatingAudioIds, setGeneratingAudioIds] = useState<Set<string>>(new Set());
+
+  // Restore audio blobs on mount
+  useEffect(() => {
+    const restoreAudio = async () => {
+      if (!skeleton) return;
+      
+      const updates = await Promise.all(skeleton.scenes.map(async (scene) => {
+        // If we have an ID but no blob URL (or an invalid one which we can't easily check, 
+        // but typically on refresh the blob URL is revoked so we can just blindly restore if we find it in DB)
+        // Actually, we should check DB for any assets related to this scene
+        const asset = await db.assets.get(scene.id);
+        if (asset && asset.type === 'audio') {
+          return { id: scene.id, url: URL.createObjectURL(asset.blob) };
+        }
+        return null;
+      }));
+
+      const validUpdates = updates.filter(u => u !== null) as { id: string, url: string }[];
+      
+      if (validUpdates.length > 0) {
+        setSkeleton(prev => {
+          if (!prev) return null;
+          let newScenes = [...prev.scenes];
+          let changed = false;
+          
+          validUpdates.forEach(update => {
+            const idx = newScenes.findIndex(s => s.id === update.id);
+            if (idx > -1 && newScenes[idx].audioUrl !== update.url) {
+              newScenes[idx] = { ...newScenes[idx], audioUrl: update.url };
+              changed = true;
+            }
+          });
+
+          if (!changed) return prev;
+          
+          // We also need to update tracks if we restored audio URLs
+          const newTracks = prev.tracks ? [...prev.tracks] : [];
+          if (newTracks.length > 0) {
+            newTracks.forEach((track, trackIndex) => {
+              const newClips = [...track.clips];
+              let trackChanged = false;
+              validUpdates.forEach(update => {
+                const clipIndex = newClips.findIndex(c => c.id === `a-${update.id}`);
+                if (clipIndex > -1 && newClips[clipIndex].audioUrl !== update.url) {
+                  newClips[clipIndex] = { ...newClips[clipIndex], audioUrl: update.url };
+                  trackChanged = true;
+                }
+              });
+              if (trackChanged) {
+                newTracks[trackIndex] = { ...track, clips: newClips };
+              }
+            });
+          }
+          
+          return { ...prev, scenes: newScenes, tracks: newTracks };
+        });
+      }
+    };
+    
+    restoreAudio();
+  }, [skeleton, setSkeleton]); // Run when skeleton loads or changes
 
   if (isGenerating && !skeleton) {
     return (
@@ -147,6 +213,23 @@ ${imageRefPrompts}
             }
             return prev;
           });
+
+          // 保存单镜头更新到历史记录
+          try {
+            const finalSkeleton = useStore.getState().skeleton;
+            if (finalSkeleton) {
+              await db.history.add({
+                timestamp: Date.now(),
+                prompt: finalSkeleton.theme || 'Untitled',
+                skeleton: finalSkeleton,
+                thumbnail: finalSkeleton.scenes.find(s => s.id === sceneId)?.imageUrl
+              });
+              console.log('Saved single scene update to history');
+            }
+          } catch (error) {
+            console.error('Failed to save history:', error);
+          }
+
           break;
         } else if (status === 'failed') {
           throw new Error('Video generation failed');
@@ -170,8 +253,69 @@ ${imageRefPrompts}
     setSkeleton({ ...skeleton, [field]: value });
   };
 
+  const rebuildTracksFromScenes = (scenes: Scene[]) => {
+    let elapsed = 0;
+    const videoClips: Clip[] = [];
+    const audioClips: Clip[] = [];
+    const textClips: Clip[] = [];
+
+    scenes.forEach(scene => {
+      const duration = scene.duration || 3;
+      
+      // Video
+      videoClips.push({
+        id: `v-${scene.id}`,
+        type: 'video',
+        startTime: elapsed,
+        duration: duration,
+        content: scene.visualDescription,
+        videoUrl: scene.videoUrl,
+        imageUrl: scene.imageUrl
+      });
+
+      // Audio
+      if (scene.audioDesign || scene.audioUrl) {
+          audioClips.push({
+              id: `a-${scene.id}`,
+              type: 'audio',
+              startTime: elapsed,
+              duration: duration,
+              content: scene.audioUrl || scene.audioDesign,
+              audioUrl: scene.audioUrl
+          });
+      }
+
+      // Text
+      if (scene.dialogueContent) {
+          textClips.push({
+              id: `t-${scene.id}`,
+              type: 'text',
+              startTime: elapsed,
+              duration: duration,
+              content: scene.dialogueContent
+          });
+      }
+      
+      elapsed += duration;
+    });
+
+    return [
+      { id: 'track-1', name: 'Track 1', clips: videoClips },
+      { id: 'track-2', name: 'Track 2', clips: audioClips },
+      { id: 'track-3', name: 'Track 3', clips: textClips }
+    ];
+  };
+
   const updateScene = (id: string, updates: Partial<Scene>) => {
-    updateField('scenes', skeleton.scenes.map(s => s.id === id ? { ...s, ...updates } : s));
+    const newScenes = skeleton.scenes.map(s => s.id === id ? { ...s, ...updates } : s);
+    
+    // If duration changed, we must rebuild tracks to ensure timeline is consistent
+    if (updates.duration !== undefined) {
+      const newTracks = rebuildTracksFromScenes(newScenes);
+      setSkeleton({ ...skeleton, scenes: newScenes, tracks: newTracks });
+    } else {
+      updateField('scenes', newScenes);
+    }
   };
 
   const addScene = () => {
@@ -189,6 +333,76 @@ ${imageRefPrompts}
 
   const removeScene = (id: string) => {
     updateField('scenes', skeleton.scenes.filter(s => s.id !== id));
+  };
+
+  const handleGenerateAudio = async (sceneId: string) => {
+    const scene = skeleton?.scenes.find(s => s.id === sceneId);
+    if (!scene || !scene.dialogueContent) return;
+
+    setGeneratingAudioIds(prev => new Set(prev).add(sceneId));
+    
+    try {
+      const response = await fetch('/api/tts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          text: scene.dialogueContent,
+          voice_type: scene.voiceActor && VOICES.some(v => v.id === scene.voiceActor) ? scene.voiceActor : 'zh_female_vv_uranus_bigtts',
+          speed_ratio: 1.0,
+        }),
+      });
+
+      if (!response.ok) throw new Error('Failed to generate audio');
+
+      const blob = await response.blob();
+      
+      // Save blob to DB
+      await db.assets.put({
+        id: sceneId,
+        type: 'audio',
+        blob: blob,
+        createdAt: Date.now()
+      });
+
+      const audioUrl = URL.createObjectURL(blob);
+      
+      // Get audio duration
+      const audio = new Audio(audioUrl);
+      const duration = await new Promise<number>((resolve) => {
+        audio.onloadedmetadata = () => {
+          resolve(audio.duration);
+        };
+        // Fallback if metadata fails to load quickly
+        setTimeout(() => resolve(scene.duration || 3), 3000);
+      });
+
+      const newDuration = Math.ceil(duration);
+
+      setSkeleton(prev => {
+        if (!prev) return null;
+        
+        // Update Scenes
+        const newScenes = prev.scenes.map(s => s.id === sceneId ? { 
+          ...s, 
+          audioUrl,
+          duration: newDuration // Update duration to match audio
+        } : s);
+        
+        // Rebuild tracks to ensure timeline is consistent with new duration
+        const newTracks = rebuildTracksFromScenes(newScenes);
+
+        return { ...prev, scenes: newScenes, tracks: newTracks };
+      });
+    } catch (error) {
+      console.error('Failed to generate audio:', error);
+      // You might want to show a toast error here
+    } finally {
+      setGeneratingAudioIds(prev => {
+        const next = new Set(prev);
+        next.delete(sceneId);
+        return next;
+      });
+    }
   };
 
   const renderStepContent = () => {
@@ -234,7 +448,7 @@ ${imageRefPrompts}
                 <div key={char.id} className="group relative flex gap-8 p-6 bg-black/[0.02] rounded-2xl border border-transparent hover:border-black/5 transition-all">
                   <div className="w-24 h-32 shrink-0 bg-black/5 rounded-xl flex items-center justify-center overflow-hidden relative group/img">
                     {char.imageUrl ? (
-                      <img src={char.imageUrl} alt={char.prototype} className="w-full h-full object-cover" />
+                      <Image src={char.imageUrl} alt={char.prototype} fill className="object-cover" />
                     ) : generatingIds.has(char.id) ? (
                       <Loader2 className="w-6 h-6 text-black/20 animate-spin" />
                     ) : (
@@ -309,7 +523,7 @@ ${imageRefPrompts}
                 <div key={scene.id} className="group relative flex gap-8 p-6 bg-black/[0.02] rounded-2xl border border-transparent hover:border-black/5 transition-all">
                   <div className="w-56 h-32 shrink-0 bg-black/5 rounded-xl flex items-center justify-center overflow-hidden relative group/img">
                     {scene.imageUrl ? (
-                      <img src={scene.imageUrl} alt={scene.prototype} className="w-full h-full object-cover" />
+                      <Image src={scene.imageUrl} alt={scene.prototype} fill className="object-cover" />
                     ) : generatingIds.has(scene.id) ? (
                       <Loader2 className="w-6 h-6 text-black/20 animate-spin" />
                     ) : (
@@ -412,7 +626,7 @@ ${imageRefPrompts}
                           {scene.videoUrl ? (
                             <video src={scene.videoUrl} className="w-full h-full object-cover" autoPlay muted loop />
                           ) : scene.imageUrl ? (
-                            <img src={scene.imageUrl} alt={`Scene ${index + 1}`} className="w-full h-full object-cover" />
+                            <Image src={scene.imageUrl} alt={`Scene ${index + 1}`} fill className="object-cover" />
                           ) : generatingIds.has(scene.id) || generatingVideoIds.has(scene.id) ? (
                             <Loader2 className="w-6 h-6 text-black/20 animate-spin" />
                           ) : (
@@ -495,12 +709,18 @@ ${imageRefPrompts}
                               <div className="grid grid-cols-2 gap-4">
                                 <div className="space-y-2">
                                   <label className="text-[10px] uppercase tracking-[0.2em] text-black/40 font-medium">配音角色</label>
-                                  <input
+                                  <select
                                     value={scene.voiceActor}
                                     onChange={(e) => updateScene(scene.id, { voiceActor: e.target.value })}
-                                    placeholder="Voice Actor: Narrator"
-                                    className="w-full bg-black/[0.02] border-none rounded-lg px-4 py-2 text-xs focus:outline-none"
-                                  />
+                                    className="w-full bg-black/[0.02] border-none rounded-lg px-4 py-2 text-xs focus:outline-none appearance-none"
+                                  >
+                                    <option value="">选择音色...</option>
+                                    {VOICES.map(voice => (
+                                      <option key={voice.id} value={voice.id}>
+                                        {voice.name}
+                                      </option>
+                                    ))}
+                                  </select>
                                 </div>
                                 <div className="space-y-2">
                                   <label className="text-[10px] uppercase tracking-[0.2em] text-black/40 font-medium">时长 (秒)</label>
@@ -514,7 +734,29 @@ ${imageRefPrompts}
                               </div>
 
                               <div className="space-y-2">
-                                <label className="text-[10px] uppercase tracking-[0.2em] text-black/40 font-medium">对白内容</label>
+                                <div className="flex items-center justify-between">
+                                  <label className="text-[10px] uppercase tracking-[0.2em] text-black/40 font-medium">对白内容</label>
+                                  <div className="flex items-center gap-2">
+                                    {scene.audioUrl && (
+                                      <audio controls src={scene.audioUrl} className="h-6 w-32" />
+                                    )}
+                                    <button
+                                      onClick={() => handleGenerateAudio(scene.id)}
+                                      disabled={generatingAudioIds.has(scene.id) || !scene.dialogueContent}
+                                      className="flex items-center gap-1.5 px-2 py-1 rounded-md hover:bg-black/5 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                                      title="生成语音"
+                                    >
+                                      {generatingAudioIds.has(scene.id) ? (
+                                        <Loader2 className="w-3 h-3 animate-spin text-black/60" />
+                                      ) : (
+                                        <Mic className="w-3 h-3 text-black/60" />
+                                      )}
+                                      <span className="text-[10px] text-black/60">
+                                        {scene.audioUrl ? '重新生成' : '生成语音'}
+                                      </span>
+                                    </button>
+                                  </div>
+                                </div>
                                 <Textarea
                                   value={scene.dialogueContent}
                                   onChange={(e) => updateScene(scene.id, { dialogueContent: e.target.value })}

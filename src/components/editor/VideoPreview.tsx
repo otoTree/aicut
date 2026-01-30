@@ -1,11 +1,77 @@
 'use client';
 
 import { useStore } from '@/store/useStore';
+import Image from 'next/image';
 import { Play, Pause, RotateCcw, Volume2, Maximize2, Sparkles, Loader2 } from 'lucide-react';
 import { Timeline } from './Timeline';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, useRef } from 'react';
 import { cn } from '@/lib/utils';
 import { llmClient } from '@/lib/llm/client';
+import { db } from '@/lib/db-client';
+
+function BackgroundVideo({ url, isActive, isPlaying }: { url: string, isActive: boolean, isPlaying: boolean }) {
+  const videoRef = useRef<HTMLVideoElement>(null);
+
+  useEffect(() => {
+    if (isActive && videoRef.current) {
+      videoRef.current.currentTime = 0;
+    }
+  }, [isActive]);
+
+  useEffect(() => {
+    if (!videoRef.current) return;
+    
+    if (isActive && isPlaying) {
+      const playPromise = videoRef.current.play();
+      if (playPromise !== undefined) {
+        playPromise.catch(() => {});
+      }
+    } else {
+      videoRef.current.pause();
+    }
+  }, [isActive, isPlaying]);
+
+  return (
+    <video 
+      ref={videoRef}
+      src={url} 
+      muted 
+      loop 
+      preload="auto"
+      className={cn(
+        "absolute inset-0 w-full h-full object-cover transition-opacity duration-300",
+        isActive ? "opacity-100 z-10" : "opacity-0 z-0"
+      )}
+    />
+  );
+}
+
+function BackgroundAudio({ url, isActive, isPlaying, currentTime, startTime }: { url: string, isActive: boolean, isPlaying: boolean, currentTime: number, startTime: number }) {
+  const audioRef = useRef<HTMLAudioElement>(null);
+
+  useEffect(() => {
+    if (!audioRef.current) return;
+    
+    if (isActive) {
+      // Sync time if needed (allow 0.5s drift)
+      const expectedTime = Math.max(0, currentTime - startTime);
+      if (Math.abs(audioRef.current.currentTime - expectedTime) > 0.5) {
+        audioRef.current.currentTime = expectedTime;
+      }
+
+      if (isPlaying) {
+        audioRef.current.play().catch(() => {});
+      } else {
+        audioRef.current.pause();
+      }
+    } else {
+      audioRef.current.pause();
+      // audioRef.current.currentTime = 0; // Optional: reset
+    }
+  }, [isActive, isPlaying, currentTime, startTime]);
+
+  return <audio ref={audioRef} src={url} />;
+}
 
 export function VideoPreview() {
   const { 
@@ -16,7 +82,9 @@ export function VideoPreview() {
     isPlaying, 
     setIsPlaying,
     setDuration,
-    addMessage
+    addMessage,
+    generatingSceneId,
+    setGeneratingSceneId
   } = useStore();
 
   const [isRegeneratingAll, setIsRegeneratingAll] = useState(false);
@@ -35,6 +103,8 @@ export function VideoPreview() {
       const scene = scenes[i];
       if (!scene.imageUrl) continue;
 
+      setGeneratingSceneId(scene.id);
+      
       try {
         const { id: taskId } = await llmClient.generateVideo(scene.visualDescription, scene.imageUrl);
         
@@ -76,15 +146,33 @@ export function VideoPreview() {
       }
     }
 
+    setGeneratingSceneId(null);
     setIsRegeneratingAll(false);
+    
+    // 保存到历史记录
+    try {
+      const finalSkeleton = useStore.getState().skeleton;
+      if (finalSkeleton) {
+        await db.history.add({
+          timestamp: Date.now(),
+          prompt: finalSkeleton.theme || 'Untitled',
+          skeleton: finalSkeleton,
+          thumbnail: finalSkeleton.scenes[0]?.imageUrl
+        });
+        console.log('Saved regeneration to history');
+      }
+    } catch (error) {
+      console.error('Failed to save history:', error);
+    }
+
     addMessage({
       role: 'assistant',
-      content: '所有视频重新生成完毕！'
+      content: '所有视频重新生成完毕！已自动保存到历史记录。'
     });
   };
 
-  const scenes = skeleton?.scenes || [];
-  const tracks = skeleton?.tracks || [];
+  const scenes = useMemo(() => skeleton?.scenes || [], [skeleton?.scenes]);
+  const tracks = useMemo(() => skeleton?.tracks || [], [skeleton?.tracks]);
 
   const totalDuration = useMemo(() => {
     if (tracks.length > 0) {
@@ -121,17 +209,30 @@ export function VideoPreview() {
       text: null as any
     };
 
-    tracks.forEach(track => {
-      track.clips.forEach(clip => {
-        if (currentTime >= clip.startTime && currentTime < clip.startTime + clip.duration) {
-          if (clip.type === 'video') active.video = clip;
-          if (clip.type === 'audio') active.audio.push(clip);
-          if (clip.type === 'text') active.text = clip;
-        }
+    if (tracks.length > 0) {
+      tracks.forEach(track => {
+        track.clips.forEach(clip => {
+          if (currentTime >= clip.startTime && currentTime < clip.startTime + clip.duration) {
+            if (clip.type === 'video') {
+              active.video = clip;
+              // Robustness check: if clip has no videoUrl but corresponding scene does, use scene's videoUrl
+              if (!clip.videoUrl && scenes.length > 0 && clip.id.startsWith('v-')) {
+                const sceneId = clip.id.substring(2);
+                const scene = scenes.find(s => s.id === sceneId);
+                if (scene?.videoUrl) {
+                  console.log('VideoPreview: Recovered videoUrl from scene for clip', clip.id);
+                  active.video = { ...clip, videoUrl: scene.videoUrl };
+                }
+              }
+            }
+            if (clip.type === 'audio') active.audio.push(clip);
+            if (clip.type === 'text') active.text = clip;
+          }
+        });
       });
-    });
+    }
 
-    // Fallback to scenes if tracks not initialized
+    // Fallback to scenes if tracks not initialized or no video clip found
     if (!active.video && scenes.length > 0) {
       let elapsed = 0;
       for (const scene of scenes) {
@@ -142,23 +243,73 @@ export function VideoPreview() {
             videoUrl: scene.videoUrl 
           };
           active.text = { content: scene.dialogueContent };
+          if (scene.audioUrl) {
+            active.audio.push({
+              id: `a-${scene.id}`,
+              type: 'audio',
+              startTime: elapsed,
+              duration: scene.duration || 3,
+              content: scene.audioUrl, // Using audioUrl as content or add a new field
+              audioUrl: scene.audioUrl
+            });
+          }
           break;
         }
         elapsed += (scene.duration || 0);
       }
     }
+    
+    // Debug logging for video status
+    if (active.video?.videoUrl) {
+      console.log('VideoPreview: Active video has URL', active.video.videoUrl);
+    }
 
     return active;
   }, [tracks, scenes, currentTime]);
+
+  const allVideoUrls = useMemo(() => {
+    const urls = new Set<string>();
+    scenes.forEach(s => {
+      if (s.videoUrl) urls.add(s.videoUrl);
+    });
+    tracks.forEach(t => {
+      t.clips.forEach(c => {
+        if (c.type === 'video' && c.videoUrl) urls.add(c.videoUrl);
+      });
+    });
+    return Array.from(urls);
+  }, [scenes, tracks]);
+
+  const allAudioUrls = useMemo(() => {
+    const urls = new Set<string>();
+    scenes.forEach(s => {
+      if (s.audioUrl) urls.add(s.audioUrl);
+    });
+    tracks.forEach(t => {
+      t.clips.forEach(c => {
+        if (c.type === 'audio' && (c.audioUrl || (c.content && c.content.startsWith('blob:')))) {
+           // check if content is a url (blob or http)
+           const url = c.audioUrl || c.content;
+           if (url && (url.startsWith('http') || url.startsWith('blob:'))) {
+             urls.add(url);
+           }
+        }
+      });
+    });
+    return Array.from(urls);
+  }, [scenes, tracks]);
 
   const formatTime = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
     const secs = Math.floor(seconds % 60);
     return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
+  
+  const generatingIndex = generatingSceneId ? scenes.findIndex(s => s.id === generatingSceneId) : -1;
+  const generatingScene = generatingSceneId ? scenes.find(s => s.id === generatingSceneId) : null;
 
   return (
-    <div className="h-full flex flex-col bg-white overflow-hidden">
+    <div className="h-full flex flex-col bg-white overflow-y-auto">
       {/* Video Player Section */}
       <div className="flex-1 flex flex-col items-center justify-center p-8 bg-zinc-50/30 relative">
         {/* Regenerate All Button */}
@@ -174,7 +325,9 @@ export function VideoPreview() {
             {isRegeneratingAll ? (
               <>
                 <Loader2 className="w-3 h-3 animate-spin" />
-                正在重新生成...
+                {generatingIndex !== -1 
+                  ? `正在生成 (${generatingIndex + 1}/${scenes.length})...`
+                  : '正在重新生成...'}
               </>
             ) : (
               <>
@@ -188,22 +341,38 @@ export function VideoPreview() {
         <div className="w-full max-w-4xl aspect-video bg-black rounded-2xl overflow-hidden shadow-2xl relative group">
           {/* Mock Video Placeholder / Video Player */}
           <div className="absolute inset-0 flex flex-col items-center justify-center">
-            {activeClips.video?.videoUrl ? (
-              <video 
-                key={activeClips.video.videoUrl}
-                src={activeClips.video.videoUrl} 
-                autoPlay 
-                muted 
-                loop 
-                className="w-full h-full object-cover transition-opacity duration-300"
+            {allVideoUrls.map((url) => (
+              <BackgroundVideo 
+                key={url}
+                url={url}
+                isActive={url === activeClips.video?.videoUrl}
+                isPlaying={isPlaying}
               />
-            ) : activeClips.video?.imageUrl ? (
-              <img 
-                src={activeClips.video.imageUrl} 
-                alt="Preview" 
-                className="w-full h-full object-cover transition-opacity duration-300"
-              />
-            ) : (
+            ))}
+
+            {allAudioUrls.map((url) => {
+              const activeClip = activeClips.audio.find(clip => (clip.audioUrl === url || clip.content === url));
+              return (
+                <BackgroundAudio 
+                  key={url}
+                  url={url}
+                  isActive={!!activeClip}
+                  isPlaying={isPlaying}
+                  currentTime={currentTime}
+                  startTime={activeClip?.startTime || 0}
+                />
+              );
+            })}
+
+            {!activeClips.video?.videoUrl && (
+              activeClips.video?.imageUrl ? (
+                <Image 
+                  src={activeClips.video.imageUrl} 
+                  alt="Preview" 
+                  fill
+                  className="object-cover transition-opacity duration-300"
+                />
+              ) : (
               <div className="flex flex-col items-center space-y-4">
                 <div 
                   onClick={() => setIsPlaying(!isPlaying)}
@@ -219,12 +388,24 @@ export function VideoPreview() {
                   {activeClips.video?.content || skeleton?.theme || '预览生成中...'}
                 </p>
               </div>
+              )
+            )}
+            
+            {/* Generating Overlay */}
+            {generatingSceneId && activeClips.video && (
+               (activeClips.video.id === `v-${generatingSceneId}`) ||
+               (activeClips.video.imageUrl === generatingScene?.imageUrl)
+            ) && (
+              <div className="absolute inset-0 bg-black/50 backdrop-blur-sm flex flex-col items-center justify-center z-20">
+                <Loader2 className="w-8 h-8 text-white animate-spin mb-2" />
+                <p className="text-white text-xs tracking-widest">正在生成视频...</p>
+              </div>
             )}
           </div>
 
           {/* Subtitles Overlay */}
           {activeClips.text?.content && (
-            <div className="absolute bottom-16 inset-x-0 flex justify-center px-12 pointer-events-none">
+            <div className="absolute bottom-16 inset-x-0 flex justify-center px-12 pointer-events-none z-20">
               <p className="bg-black/40 backdrop-blur-md text-white px-4 py-2 rounded text-sm font-light tracking-wide text-center">
                 {activeClips.text.content}
               </p>
@@ -232,7 +413,7 @@ export function VideoPreview() {
           )}
 
           {/* Video Controls Overlay */}
-          <div className="absolute bottom-0 inset-x-0 p-6 bg-gradient-to-t from-black/60 to-transparent opacity-0 group-hover:opacity-100 transition-opacity">
+          <div className="absolute bottom-0 inset-x-0 p-6 bg-gradient-to-t from-black/60 to-transparent opacity-0 group-hover:opacity-100 transition-opacity z-20">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-6">
                 <button onClick={() => setIsPlaying(!isPlaying)}>

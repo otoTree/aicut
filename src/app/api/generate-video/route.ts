@@ -99,6 +99,8 @@ export async function GET(req: Request) {
 
     const data = await response.json();
 
+    console.log(`[Video Gen] Querying task status: ${id} -> ${JSON.stringify(data, null, 2)}`);
+
     if (!response.ok) {
       console.error('[Video Gen] Error querying task:', data);
       return NextResponse.json(data, { status: response.status });

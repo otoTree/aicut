@@ -10,6 +10,8 @@ import { Sparkles, ArrowRight } from 'lucide-react';
 import { PromptFactory } from '@/lib/prompts';
 import { llmClient } from '@/lib/llm/client';
 import { extractJSON, parsePartialJson } from '@/lib/utils';
+import { HistoryList } from './HistoryList';
+import { db } from '@/lib/db-client';
 
 export function Hero() {
   const { setPrompt, setView, setIsGenerating, setSkeleton, addMessage, setIsSkeletonComplete } = useStore();
@@ -91,62 +93,74 @@ export function Hero() {
         ...scene,
       }));
 
-      setSkeleton((prev: VideoSkeleton | null) => {
-        if (!prev) return null;
-        
-        // 初始化轨道
-        let elapsed = 0;
-        const videoClips = formattedFinalScenes.map(scene => {
-          const clip = {
-            id: `v-${scene.id}`,
-            type: 'video' as const,
-            startTime: elapsed,
-            duration: scene.duration || 3,
-            content: scene.visualDescription,
-            title: `Scene ${scene.id.slice(0, 4)}`
-          };
-          elapsed += scene.duration || 3;
-          return clip;
-        });
-
-        elapsed = 0;
-        const audioClips = formattedFinalScenes.filter(s => s.audioDesign).map(scene => {
-          const clip = {
-            id: `a-${scene.id}`,
-            type: 'audio' as const,
-            startTime: elapsed,
-            duration: scene.duration || 3,
-            content: scene.audioDesign,
-            title: scene.audioDesign.slice(0, 20)
-          };
-          elapsed += scene.duration || 3;
-          return clip;
-        });
-
-        elapsed = 0;
-        const textClips = formattedFinalScenes.filter(s => s.dialogueContent).map(scene => {
-          const clip = {
-            id: `t-${scene.id}`,
-            type: 'text' as const,
-            startTime: elapsed,
-            duration: scene.duration || 3,
-            content: scene.dialogueContent,
-            title: scene.dialogueContent.slice(0, 20)
-          };
-          elapsed += scene.duration || 3;
-          return clip;
-        });
-
-        return { 
-          ...prev, 
-          scenes: formattedFinalScenes,
-          tracks: [
-            { id: 'track-1', name: 'Track 1', clips: videoClips },
-            { id: 'track-2', name: 'Track 2', clips: audioClips },
-            { id: 'track-3', name: 'Track 3', clips: textClips }
-          ]
+      // 初始化轨道
+      let elapsed = 0;
+      const videoClips = formattedFinalScenes.map(scene => {
+        const clip = {
+          id: `v-${scene.id}`,
+          type: 'video' as const,
+          startTime: elapsed,
+          duration: scene.duration || 3,
+          content: scene.visualDescription,
+          title: `Scene ${scene.id.slice(0, 4)}`
         };
+        elapsed += scene.duration || 3;
+        return clip;
       });
+
+      elapsed = 0;
+      const audioClips = formattedFinalScenes.filter(s => s.audioDesign).map(scene => {
+        const clip = {
+          id: `a-${scene.id}`,
+          type: 'audio' as const,
+          startTime: elapsed,
+          duration: scene.duration || 3,
+          content: scene.audioDesign,
+          title: scene.audioDesign.slice(0, 20)
+        };
+        elapsed += scene.duration || 3;
+        return clip;
+      });
+
+      elapsed = 0;
+      const textClips = formattedFinalScenes.filter(s => s.dialogueContent).map(scene => {
+        const clip = {
+          id: `t-${scene.id}`,
+          type: 'text' as const,
+          startTime: elapsed,
+          duration: scene.duration || 3,
+          content: scene.dialogueContent,
+          title: scene.dialogueContent.slice(0, 20)
+        };
+        elapsed += scene.duration || 3;
+        return clip;
+      });
+
+      const fullSkeleton = { 
+        ...skeletonData, 
+        scenes: formattedFinalScenes,
+        tracks: [
+          { id: 'track-1', name: 'Track 1', clips: videoClips },
+          { id: 'track-2', name: 'Track 2', clips: audioClips },
+          { id: 'track-3', name: 'Track 3', clips: textClips }
+        ]
+      };
+
+      setSkeleton(fullSkeleton);
+
+      // 保存骨架到历史记录
+      let historyId: number | undefined;
+      try {
+        historyId = await db.history.add({
+          timestamp: Date.now(),
+          prompt: inputValue,
+          skeleton: fullSkeleton,
+          thumbnail: undefined
+        });
+        console.log('Saved initial skeleton to history', historyId);
+      } catch (error) {
+        console.error('Failed to save history:', error);
+      }
 
       // 3. 异步生成图片补充
       const generateImages = async () => {
@@ -154,10 +168,41 @@ export function Hero() {
         const totalImages = characters.length + sceneDesigns.length + formattedFinalScenes.length;
         let finishedCount = 0;
 
-        const checkFinished = () => {
+        const checkFinished = async () => {
           finishedCount++;
+          console.log(`[Hero] Image generation progress: ${finishedCount}/${totalImages}`);
+
           if (finishedCount === totalImages) {
             setIsSkeletonComplete(true);
+            
+            // 给状态更新一点时间，确保所有 setSkeleton 都已生效
+            await new Promise(resolve => setTimeout(resolve, 500));
+
+            // 更新历史记录中的图片
+            try {
+              if (historyId) {
+                const finalSkeleton = useStore.getState().skeleton;
+                if (finalSkeleton) {
+                  // 统计已生成的图片数量用于调试
+                  const imageCount = [
+                    ...(finalSkeleton.characters || []),
+                    ...(finalSkeleton.sceneDesigns || []),
+                    ...(finalSkeleton.scenes || [])
+                  ].filter(item => item.imageUrl).length;
+                  
+                  console.log(`[Hero] Updating history ${historyId}. Images found: ${imageCount}/${totalImages}`);
+
+                  await db.history.update(historyId, {
+                    skeleton: finalSkeleton,
+                    thumbnail: finalSkeleton.scenes[0]?.imageUrl
+                  });
+                  console.log('[Hero] Updated history with images successfully');
+                }
+              }
+            } catch (error) {
+              console.error('Failed to update history:', error);
+            }
+
             addMessage({
               role: 'assistant',
               content: '骨架生成完成，分镜头脚本与预览图已就绪。是否开始生成视频？',
@@ -278,11 +323,12 @@ ${imageRefPrompts}
 
   return (
     <div className="flex flex-col items-center justify-center min-h-[60vh] px-4">
+      {/* Title Section */}
       <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.8, ease: "easeOut" }}
-        className="text-center space-y-6 max-w-3xl"
+        className="text-center space-y-6 max-w-3xl mb-12"
       >
         <h1 className="text-5xl md:text-6xl font-serif font-light tracking-tight text-black">
           意到，影成
@@ -290,26 +336,59 @@ ${imageRefPrompts}
         <p className="text-black/50 text-lg font-light tracking-wide">
           输入一句话，AI 为您构建骨架与分镜头
         </p>
-        
-        <div className="relative mt-12 group">
-          <div className="absolute -inset-0.5 bg-black/5 rounded-full blur opacity-0 group-focus-within:opacity-100 transition duration-500"></div>
-          <div className="relative flex items-center bg-white border border-black/10 rounded-full p-2 pl-6 shadow-sm">
-            <Input
+      </motion.div>
+
+      {/* Input Section */}
+      <div className="w-full max-w-2xl mx-auto px-6 relative z-10">
+        <motion.div 
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.4, duration: 0.8 }}
+          className="relative group"
+        >
+          <div className="absolute inset-0 bg-gradient-to-r from-blue-100 via-purple-100 to-pink-100 rounded-full blur-xl opacity-20 group-hover:opacity-30 transition-opacity duration-500" />
+          <div className="relative bg-white/80 backdrop-blur-xl border border-white/40 shadow-xl rounded-full p-2 pl-6 flex items-center gap-4 transition-all duration-300 group-hover:shadow-2xl group-hover:scale-[1.01]">
+            <Sparkles className="w-5 h-5 text-blue-500/50 animate-pulse" />
+            <Input 
               value={inputValue}
               onChange={(e) => setInputValue(e.target.value)}
-              placeholder="描述您想制作的视频..."
-              className="border-none focus-visible:ring-0 text-lg bg-transparent placeholder:text-black/20"
+              placeholder="描述你想要生成的视频故事..." 
+              className="flex-1 border-none bg-transparent shadow-none focus-visible:ring-0 text-lg placeholder:text-black/20 font-light h-12"
               onKeyDown={(e) => e.key === 'Enter' && handleGenerate()}
             />
             <Button 
               onClick={handleGenerate}
-              className="rounded-full bg-black text-white hover:bg-black/80 px-6 ml-2"
+              className="rounded-full px-6 py-6 bg-black text-white hover:bg-black/80 transition-all duration-300 group-hover:translate-x-1"
             >
-              <Sparkles className="w-4 h-4 mr-2" />
-              生成
+              <ArrowRight className="w-5 h-5" />
             </Button>
           </div>
-        </div>
+        </motion.div>
+
+        <motion.div 
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ delay: 0.8, duration: 1 }}
+          className="mt-8 flex justify-center gap-4 text-xs text-black/30 font-light tracking-wide"
+        >
+          <span>科幻短片</span>
+          <span>•</span>
+          <span>古风MV</span>
+          <span>•</span>
+          <span>产品广告</span>
+          <span>•</span>
+          <span>教育科普</span>
+        </motion.div>
+      </div>
+
+
+      {/* History List */}
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 1.0, duration: 0.8 }}
+      >
+        <HistoryList />
       </motion.div>
     </div>
   );

@@ -6,6 +6,15 @@ export function cn(...inputs: ClassValue[]) {
 }
 
 /**
+ * 获取媒体资源的代理 URL，以解决 COOP/COEP 环境下的跨域问题
+ */
+export function getProxyUrl(url?: string): string {
+  if (!url) return '';
+  if (url.startsWith('data:') || url.startsWith('blob:') || url.startsWith('/')) return url;
+  return `/api/proxy-media?url=${encodeURIComponent(url)}`;
+}
+
+/**
  * 从混合文本中提取 JSON
  */
 export function extractJSON<T>(text: string): T {

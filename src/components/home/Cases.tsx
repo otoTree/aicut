@@ -2,6 +2,7 @@
 
 import { motion } from 'framer-motion';
 import { Card } from '@/components/ui/card';
+import Image from 'next/image';
 import { Play } from 'lucide-react';
 
 const cases = [
@@ -41,10 +42,11 @@ export function Cases() {
           >
             <Card className="group overflow-hidden border-none bg-transparent cursor-pointer">
               <div className="relative aspect-video rounded-lg overflow-hidden bg-zinc-100">
-                <img 
+                <Image 
                   src={item.image} 
                   alt={item.title}
-                  className="object-cover w-full h-full grayscale hover:grayscale-0 transition-all duration-700 scale-105 group-hover:scale-100"
+                  fill
+                  className="object-cover grayscale hover:grayscale-0 transition-all duration-700 scale-105 group-hover:scale-100"
                 />
                 <div className="absolute inset-0 bg-black/20 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
                   <div className="w-12 h-12 rounded-full bg-white/20 backdrop-blur-sm flex items-center justify-center border border-white/30">

@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { persist, createJSONStorage } from 'zustand/middleware';
 
 export interface Scene {
   id: string;
@@ -12,6 +13,7 @@ export interface Scene {
   duration: number;
   imageUrl?: string;
   videoUrl?: string;
+  audioUrl?: string;
 }
 
 export interface Character {
@@ -38,6 +40,7 @@ export interface Clip {
   content: string;
   imageUrl?: string;
   videoUrl?: string;
+  audioUrl?: string;
   title?: string;
 }
 
@@ -72,6 +75,7 @@ export interface AppState {
   currentStep: number;
   messages: Message[];
   isGenerating: boolean;
+  generatingSceneId: string | null;
   isSkeletonComplete: boolean;
   currentTime: number;
   duration: number;
@@ -82,35 +86,52 @@ export interface AppState {
   setCurrentStep: (step: number) => void;
   addMessage: (message: Message) => void;
   setIsGenerating: (isGenerating: boolean) => void;
+  setGeneratingSceneId: (id: string | null) => void;
   setIsSkeletonComplete: (isComplete: boolean) => void;
   setCurrentTime: (time: number | ((prev: number) => number)) => void;
   setDuration: (duration: number) => void;
   setIsPlaying: (isPlaying: boolean) => void;
 }
 
-export const useStore = create<AppState>((set) => ({
-  view: 'home',
-  prompt: '',
-  skeleton: null,
-  currentStep: 0,
-  messages: [],
-  isGenerating: false,
-  isSkeletonComplete: false,
-  currentTime: 0,
-  duration: 0,
-  isPlaying: false,
-  setView: (view) => set({ view }),
-  setPrompt: (prompt) => set({ prompt }),
-  setSkeleton: (skeleton) => set((state) => ({ 
-    skeleton: typeof skeleton === 'function' ? skeleton(state.skeleton) : skeleton 
-  })),
-  setCurrentStep: (currentStep) => set({ currentStep }),
-  addMessage: (message) => set((state) => ({ messages: [...state.messages, message] })),
-  setIsGenerating: (isGenerating) => set({ isGenerating }),
-  setIsSkeletonComplete: (isSkeletonComplete) => set({ isSkeletonComplete }),
-  setCurrentTime: (currentTime) => set((state) => ({ 
-    currentTime: typeof currentTime === 'function' ? currentTime(state.currentTime) : currentTime 
-  })),
-  setDuration: (duration) => set({ duration }),
-  setIsPlaying: (isPlaying) => set({ isPlaying }),
-}));
+export const useStore = create<AppState>()(
+  persist(
+    (set) => ({
+      view: 'home',
+      prompt: '',
+      skeleton: null,
+      currentStep: 0,
+      messages: [],
+      isGenerating: false,
+      generatingSceneId: null,
+      isSkeletonComplete: false,
+      currentTime: 0,
+      duration: 0,
+      isPlaying: false,
+      setView: (view) => set({ view }),
+      setPrompt: (prompt) => set({ prompt }),
+      setSkeleton: (skeleton) => set((state) => ({ 
+        skeleton: typeof skeleton === 'function' ? skeleton(state.skeleton) : skeleton 
+      })),
+      setCurrentStep: (step) => set({ currentStep: step }),
+      addMessage: (message) => set((state) => ({ messages: [...state.messages, message] })),
+      setIsGenerating: (isGenerating) => set({ isGenerating }),
+      setGeneratingSceneId: (generatingSceneId) => set({ generatingSceneId }),
+      setIsSkeletonComplete: (isSkeletonComplete) => set({ isSkeletonComplete }),
+      setCurrentTime: (time) => set((state) => ({ 
+        currentTime: typeof time === 'function' ? time(state.currentTime) : time 
+      })),
+      setDuration: (duration) => set({ duration }),
+      setIsPlaying: (isPlaying) => set({ isPlaying }),
+    }),
+    {
+      name: 'aicut-storage',
+      storage: createJSONStorage(() => localStorage),
+      partialize: (state) => ({ 
+        skeleton: state.skeleton, 
+        currentStep: state.currentStep,
+        messages: state.messages,
+        prompt: state.prompt
+      }),
+    }
+  )
+);

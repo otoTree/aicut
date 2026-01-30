@@ -6,11 +6,30 @@ import { SkeletonEditor } from '@/components/editor/SkeletonEditor';
 import { VideoPreview } from '@/components/editor/VideoPreview';
 import { AIChat } from '@/components/editor/AIChat';
 import { motion } from 'framer-motion';
-import { ChevronLeft } from 'lucide-react';
+import { ChevronLeft, Loader2, FileJson, Film } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { useVideoExporter } from '@/lib/useVideoExporter';
 
 export function EditorLayout() {
   const { setView, skeleton } = useStore();
+  const { exportVideo, isExporting, progress } = useVideoExporter();
+
+  const handleExportJson = () => {
+    if (!skeleton) return;
+    try {
+      const blob = new Blob([JSON.stringify(skeleton, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${skeleton.theme || 'project'}-export.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      console.error('Export failed:', error);
+    }
+  };
 
   return (
     <motion.div 
@@ -34,8 +53,37 @@ export function EditorLayout() {
             {skeleton?.theme || '新项目'}
           </h2>
         </div>
-        <div className="flex items-center gap-3">
-          <Button variant="ghost" className="text-sm font-light hover:bg-black/5">导出</Button>
+        <div className="flex items-center gap-2">
+          <Button 
+            variant="ghost" 
+            className="text-sm font-light hover:bg-black/5"
+            onClick={handleExportJson}
+            disabled={!skeleton}
+            title="导出项目文件 (JSON)"
+          >
+            <FileJson className="w-4 h-4 mr-2" />
+            项目
+          </Button>
+          <Button 
+            variant="ghost" 
+            className="text-sm font-light hover:bg-black/5 min-w-[100px]"
+            onClick={() => exportVideo(skeleton!)}
+            disabled={!skeleton || isExporting}
+            title="导出合成视频 (MP4)"
+          >
+            {isExporting ? (
+              <>
+                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                {progress}%
+              </>
+            ) : (
+              <>
+                <Film className="w-4 h-4 mr-2" />
+                视频
+              </>
+            )}
+          </Button>
+          <div className="h-4 w-[1px] bg-black/10 mx-2" />
           <Button className="bg-black text-white hover:bg-black/80 text-sm font-light rounded-full px-6">
             发布
           </Button>
