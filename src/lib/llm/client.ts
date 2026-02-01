@@ -94,7 +94,7 @@ export class LLMClient {
     }
   }
 
-  async generateVideo(prompt: string, imageUrl: string): Promise<{ id: string }> {
+  async generateVideo(prompt: string, imageUrl: string, duration?: number): Promise<{ id: string }> {
     try {
       const response = await fetch('/api/generate-video', {
         method: 'POST',
@@ -104,6 +104,7 @@ export class LLMClient {
         body: JSON.stringify({
           prompt,
           imageUrl,
+          duration,
         }),
       });
 

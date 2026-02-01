@@ -69,3 +69,8 @@ export const VOICES: Voice[] = [
 ];
 
 export const getVoiceName = (id: string) => VOICES.find(v => v.id === id)?.name || id;
+
+export const getVoiceId = (nameOrId: string): string | undefined => {
+  const voice = VOICES.find(v => v.id === nameOrId || v.name === nameOrId);
+  return voice?.id;
+};

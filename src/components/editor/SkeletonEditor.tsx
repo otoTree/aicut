@@ -1,13 +1,13 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import Image from 'next/image';
-import { useStore, Scene, Character, SceneDesign, Clip } from '@/store/useStore';
+import { useStore, Scene, Character, SceneDesign, Clip, VideoSkeleton } from '@/store/useStore';
 import { Textarea } from '@/components/ui/textarea';
 import { Input } from '@/components/ui/input';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Loader2, Plus, GripVertical, Trash2, Image as ImageIcon, User, Map, Film, BookOpen, Palette, Sparkles, Volume2, Mic } from 'lucide-react';
-import { VOICES, getVoiceName } from '@/lib/tts/voices';
+import { VOICES, getVoiceName, getVoiceId } from '@/lib/tts/voices';
 import { cn } from '@/lib/utils';
 import { llmClient } from '@/lib/llm/client';
 import { db } from '@/lib/db-client';
@@ -25,11 +25,17 @@ export function SkeletonEditor() {
   const [generatingIds, setGeneratingIds] = useState<Set<string>>(new Set());
   const [generatingVideoIds, setGeneratingVideoIds] = useState<Set<string>>(new Set());
   const [generatingAudioIds, setGeneratingAudioIds] = useState<Set<string>>(new Set());
+  const audioRestored = useRef(false);
 
   // Restore audio blobs on mount
   useEffect(() => {
     const restoreAudio = async () => {
-      if (!skeleton) return;
+      if (!skeleton) {
+        audioRestored.current = false;
+        return;
+      }
+
+      if (audioRestored.current) return;
       
       const updates = await Promise.all(skeleton.scenes.map(async (scene) => {
         // If we have an ID but no blob URL (or an invalid one which we can't easily check, 
@@ -82,6 +88,8 @@ export function SkeletonEditor() {
           return { ...prev, scenes: newScenes, tracks: newTracks };
         });
       }
+      
+      audioRestored.current = true;
     };
     
     restoreAudio();
@@ -109,10 +117,10 @@ export function SkeletonEditor() {
       let referenceImages: string[] = [];
 
       if (type === 'characters') {
-        finalPrompt = `${artStyle}, ${description}, standing pose, full body visible, no action, isolated on white background, no background, character only, high quality, masterpiece, original character design, avoid copyright, safe for work`;
+        finalPrompt = `艺术风格：${artStyle}。角色描述：${description}。画面要求：全身站立，无动作，纯白背景，无背景，仅角色，高质量，杰作，原创设计。Safe for work, avoid copyright.`;
         size = '1728x2304';
       } else if (type === 'sceneDesigns') {
-        finalPrompt = `${artStyle}, ${description}, no characters, empty scene, background only, high quality, masterpiece, original environment design, avoid copyright, safe for work`;
+        finalPrompt = `艺术风格：${artStyle}。场景描述：${description}。画面要求：无角色，空场景，仅背景，高质量，杰作，原创设计。Safe for work, avoid copyright.`;
         size = '2560x1440';
       } else if (type === 'scenes') {
         const scene = skeleton.scenes.find(s => s.id === id);
@@ -180,7 +188,14 @@ ${imageRefPrompts}
 
     setGeneratingVideoIds(prev => new Set(prev).add(sceneId));
     try {
-      const { id: taskId } = await llmClient.generateVideo(scene.visualDescription, scene.imageUrl);
+      // Construct prompt with dialogue for lip-sync
+      let finalPrompt = scene.visualDescription;
+      if (scene.dialogueContent) {
+        // According to Seedance 1.5 Pro docs, putting dialogue in quotes helps generate matching audio/lip-sync
+        finalPrompt = `${scene.visualDescription} Character says: "${scene.dialogueContent}"`;
+      }
+
+      const { id: taskId } = await llmClient.generateVideo(finalPrompt, scene.imageUrl, scene.duration);
       
       let attempts = 0;
       const maxAttempts = 60;
@@ -249,8 +264,8 @@ ${imageRefPrompts}
     }
   };
 
-  const updateField = (field: keyof typeof skeleton, value: any) => {
-    setSkeleton({ ...skeleton, [field]: value });
+  const updateField = (field: keyof VideoSkeleton, value: any) => {
+    setSkeleton(prev => prev ? { ...prev, [field]: value } : null);
   };
 
   const rebuildTracksFromScenes = (scenes: Scene[]) => {
@@ -307,32 +322,103 @@ ${imageRefPrompts}
   };
 
   const updateScene = (id: string, updates: Partial<Scene>) => {
-    const newScenes = skeleton.scenes.map(s => s.id === id ? { ...s, ...updates } : s);
-    
-    // If duration changed, we must rebuild tracks to ensure timeline is consistent
-    if (updates.duration !== undefined) {
-      const newTracks = rebuildTracksFromScenes(newScenes);
-      setSkeleton({ ...skeleton, scenes: newScenes, tracks: newTracks });
-    } else {
-      updateField('scenes', newScenes);
-    }
+    setSkeleton(prev => {
+      if (!prev) return null;
+      
+      const newScenes = prev.scenes.map(s => s.id === id ? { ...s, ...updates } : s);
+      
+      // If duration changed, we must rebuild tracks to ensure timeline is consistent
+      if (updates.duration !== undefined) {
+        const newTracks = rebuildTracksFromScenes(newScenes);
+        return { ...prev, scenes: newScenes, tracks: newTracks };
+      } else {
+        return { ...prev, scenes: newScenes };
+      }
+    });
   };
 
   const addScene = () => {
-    const newId = Math.random().toString(36).substr(2, 9);
-    updateField('scenes', [...skeleton.scenes, { 
-      id: newId, 
-      visualDescription: '', 
-      cameraDesign: '', 
-      audioDesign: '', 
-      voiceActor: '', 
-      dialogueContent: '', 
-      duration: 3 
-    }]);
+    setSkeleton(prev => {
+      if (!prev) return null;
+      const newId = Math.random().toString(36).substr(2, 9);
+      const newScenes = [...prev.scenes, { 
+        id: newId, 
+        visualDescription: '', 
+        cameraDesign: '', 
+        audioDesign: '', 
+        voiceActor: '', 
+        dialogueContent: '', 
+        duration: 3 
+      }];
+      return { ...prev, scenes: newScenes };
+    });
   };
 
   const removeScene = (id: string) => {
-    updateField('scenes', skeleton.scenes.filter(s => s.id !== id));
+    setSkeleton(prev => {
+      if (!prev) return null;
+      return { ...prev, scenes: prev.scenes.filter(s => s.id !== id) };
+    });
+  };
+
+  const addCharacter = () => {
+    setSkeleton(prev => {
+      if (!prev) return null;
+      return {
+        ...prev,
+        characters: [...prev.characters, { id: Math.random().toString(36).substr(2, 9), prototype: '', description: '' }]
+      };
+    });
+  };
+
+  const updateCharacter = (id: string, updates: Partial<Character>) => {
+    setSkeleton(prev => {
+      if (!prev) return null;
+      return {
+        ...prev,
+        characters: prev.characters.map(c => c.id === id ? { ...c, ...updates } : c)
+      };
+    });
+  };
+
+  const removeCharacter = (id: string) => {
+    setSkeleton(prev => {
+      if (!prev) return null;
+      return {
+        ...prev,
+        characters: prev.characters.filter(c => c.id !== id)
+      };
+    });
+  };
+
+  const addSceneDesign = () => {
+    setSkeleton(prev => {
+      if (!prev) return null;
+      return {
+        ...prev,
+        sceneDesigns: [...prev.sceneDesigns, { id: Math.random().toString(36).substr(2, 9), prototype: '', description: '' }]
+      };
+    });
+  };
+
+  const updateSceneDesign = (id: string, updates: Partial<SceneDesign>) => {
+    setSkeleton(prev => {
+      if (!prev) return null;
+      return {
+        ...prev,
+        sceneDesigns: prev.sceneDesigns.map(s => s.id === id ? { ...s, ...updates } : s)
+      };
+    });
+  };
+
+  const removeSceneDesign = (id: string) => {
+    setSkeleton(prev => {
+      if (!prev) return null;
+      return {
+        ...prev,
+        sceneDesigns: prev.sceneDesigns.filter(s => s.id !== id)
+      };
+    });
   };
 
   const handleGenerateAudio = async (sceneId: string) => {
@@ -342,12 +428,13 @@ ${imageRefPrompts}
     setGeneratingAudioIds(prev => new Set(prev).add(sceneId));
     
     try {
+      const voiceId = getVoiceId(scene.voiceActor);
       const response = await fetch('/api/tts', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           text: scene.dialogueContent,
-          voice_type: scene.voiceActor && VOICES.some(v => v.id === scene.voiceActor) ? scene.voiceActor : 'zh_female_vv_uranus_bigtts',
+          voice_type: voiceId || 'zh_female_vv_uranus_bigtts',
           speed_ratio: 1.0,
         }),
       });
@@ -405,6 +492,22 @@ ${imageRefPrompts}
     }
   };
 
+  const handleGenerateAllAudio = async () => {
+    if (!skeleton) return;
+    
+    // Find all scenes with dialogue but no audio
+    const scenesToGenerate = skeleton.scenes.filter(s => s.dialogueContent && !s.audioUrl && !generatingAudioIds.has(s.id));
+    
+    if (scenesToGenerate.length === 0) return;
+
+    // Process sequentially to avoid overwhelming the server/browser
+    for (const scene of scenesToGenerate) {
+      await handleGenerateAudio(scene.id);
+      // Small delay between requests
+      await new Promise(resolve => setTimeout(resolve, 500));
+    }
+  };
+
   const renderStepContent = () => {
     switch (currentStep) {
       case 0: // Story Overview
@@ -437,7 +540,7 @@ ${imageRefPrompts}
             <div className="flex items-center justify-between">
               <label className="text-[10px] uppercase tracking-[0.2em] text-black/40 font-medium">关键角色设计</label>
               <button 
-                onClick={() => updateField('characters', [...skeleton.characters, { id: Math.random().toString(36).substr(2, 9), prototype: '', description: '' }])}
+                onClick={addCharacter}
                 className="p-1 hover:bg-black/5 rounded transition-colors text-black/40 hover:text-black"
               >
                 <Plus className="w-4 h-4" />
@@ -476,27 +579,19 @@ ${imageRefPrompts}
                   <div className="flex-1 space-y-4">
                     <input
                       value={char.prototype}
-                      onChange={(e) => {
-                        const newChars = [...skeleton.characters];
-                        newChars[idx].prototype = e.target.value;
-                        updateField('characters', newChars);
-                      }}
+                      onChange={(e) => updateCharacter(char.id, { prototype: e.target.value })}
                       placeholder="角色原型 (如: 孤独的旅者)"
                       className="bg-transparent border-none focus:outline-none text-xl font-serif w-full"
                     />
                     <Textarea
                       value={char.description}
-                      onChange={(e) => {
-                        const newChars = [...skeleton.characters];
-                        newChars[idx].description = e.target.value;
-                        updateField('characters', newChars);
-                      }}
+                      onChange={(e) => updateCharacter(char.id, { description: e.target.value })}
                       placeholder="详细描述角色外观、性格等..."
                       className="min-h-[80px] border-none bg-transparent focus-visible:ring-0 text-sm leading-relaxed p-0 resize-none"
                     />
                   </div>
                   <button 
-                    onClick={() => updateField('characters', skeleton.characters.filter(c => c.id !== char.id))}
+                    onClick={() => removeCharacter(char.id)}
                     className="absolute top-4 right-4 p-2 opacity-0 group-hover:opacity-100 transition-opacity text-black/20 hover:text-red-400"
                   >
                     <Trash2 className="w-4 h-4" />
@@ -512,7 +607,7 @@ ${imageRefPrompts}
             <div className="flex items-center justify-between">
               <label className="text-[10px] uppercase tracking-[0.2em] text-black/40 font-medium">核心场景设计</label>
               <button 
-                onClick={() => updateField('sceneDesigns', [...skeleton.sceneDesigns, { id: Math.random().toString(36).substr(2, 9), prototype: '', description: '' }])}
+                onClick={addSceneDesign}
                 className="p-1 hover:bg-black/5 rounded transition-colors text-black/40 hover:text-black"
               >
                 <Plus className="w-4 h-4" />
@@ -551,27 +646,19 @@ ${imageRefPrompts}
                   <div className="flex-1 space-y-4">
                     <input
                       value={scene.prototype}
-                      onChange={(e) => {
-                        const newScenes = [...skeleton.sceneDesigns];
-                        newScenes[idx].prototype = e.target.value;
-                        updateField('sceneDesigns', newScenes);
-                      }}
+                      onChange={(e) => updateSceneDesign(scene.id, { prototype: e.target.value })}
                       placeholder="场景原型 (如: 赛博朋克风格的雨夜街头)"
                       className="bg-transparent border-none focus:outline-none text-xl font-serif w-full"
                     />
                     <Textarea
                       value={scene.description}
-                      onChange={(e) => {
-                        const newScenes = [...skeleton.sceneDesigns];
-                        newScenes[idx].description = e.target.value;
-                        updateField('sceneDesigns', newScenes);
-                      }}
+                      onChange={(e) => updateSceneDesign(scene.id, { description: e.target.value })}
                       placeholder="描述场景的氛围、灯光、构图细节..."
                       className="min-h-[80px] border-none bg-transparent focus-visible:ring-0 text-sm leading-relaxed p-0 resize-none"
                     />
                   </div>
                   <button 
-                    onClick={() => updateField('sceneDesigns', skeleton.sceneDesigns.filter(s => s.id !== scene.id))}
+                    onClick={() => removeSceneDesign(scene.id)}
                     className="absolute top-4 right-4 p-2 opacity-0 group-hover:opacity-100 transition-opacity text-black/20 hover:text-red-400"
                   >
                     <Trash2 className="w-4 h-4" />
@@ -594,12 +681,26 @@ ${imageRefPrompts}
           <div className="space-y-8">
             <div className="flex items-center justify-between">
               <label className="text-[10px] uppercase tracking-[0.2em] text-black/40 font-medium">分镜头脚本</label>
-              <button 
-                onClick={addScene}
-                className="p-1 hover:bg-black/5 rounded transition-colors text-black/40 hover:text-black"
-              >
-                <Plus className="w-4 h-4" />
-              </button>
+              <div className="flex items-center gap-2">
+                <button 
+                  onClick={handleGenerateAllAudio}
+                  disabled={generatingAudioIds.size > 0}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-black/[0.04] hover:bg-black/[0.08] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                >
+                  {generatingAudioIds.size > 0 ? (
+                    <Loader2 className="w-3 h-3 animate-spin" />
+                  ) : (
+                    <Volume2 className="w-3 h-3" />
+                  )}
+                  <span className="text-[10px] font-medium">一键生成音频</span>
+                </button>
+                <button 
+                  onClick={addScene}
+                  className="p-1 hover:bg-black/5 rounded transition-colors text-black/40 hover:text-black"
+                >
+                  <Plus className="w-4 h-4" />
+                </button>
+              </div>
             </div>
 
             <div className="space-y-6">

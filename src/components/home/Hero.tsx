@@ -12,14 +12,16 @@ import { llmClient } from '@/lib/llm/client';
 import { extractJSON, parsePartialJson } from '@/lib/utils';
 import { HistoryList } from './HistoryList';
 import { db } from '@/lib/db-client';
+import { getVoiceId } from '@/lib/tts/voices';
 
 export function Hero() {
-  const { setPrompt, setView, setIsGenerating, setSkeleton, addMessage, setIsSkeletonComplete } = useStore();
+  const { setPrompt, setView, setIsGenerating, setSkeleton, addMessage, setIsSkeletonComplete, reset } = useStore();
   const [inputValue, setInputValue] = useState('');
 
   const handleGenerate = async () => {
     if (!inputValue.trim()) return;
     
+    reset();
     setPrompt(inputValue);
     setView('editor');
     setIsGenerating(true);
@@ -91,6 +93,8 @@ export function Hero() {
       const formattedFinalScenes = finalScenes.map((scene) => ({
         id: Math.random().toString(36).substr(2, 9),
         ...scene,
+        voiceActor: getVoiceId(scene.voiceActor) || scene.voiceActor || '',
+        duration: typeof scene.duration === 'number' ? scene.duration : (parseInt(scene.duration) || 3),
       }));
 
       // 初始化轨道
@@ -167,6 +171,9 @@ export function Hero() {
         const { artStyle, characters, sceneDesigns } = skeletonData;
         const totalImages = characters.length + sceneDesigns.length + formattedFinalScenes.length;
         let finishedCount = 0;
+        
+        // 本地缓存生成的图片 URL，确保分镜生成时能立即获取
+        const imageUrls: Record<string, string> = {};
 
         const checkFinished = async () => {
           finishedCount++;
@@ -212,64 +219,75 @@ export function Hero() {
           }
         };
 
-        // 并行生成角色图片
-        characters.forEach(async (char: any, index: number) => {
-          try {
-            const charPrompt = `${artStyle}, ${char.description}, standing pose, full body visible, no action, isolated on white background, no background, character only, high quality, masterpiece, original character design, avoid copyright, safe for work`;
-            const response = await llmClient.generateImage(charPrompt, '1728x2304');
-            setSkeleton((prev: VideoSkeleton | null) => {
-              if (!prev) return null;
-              const newCharacters = [...prev.characters];
-              newCharacters[index] = { ...newCharacters[index], imageUrl: response.url };
-              return { ...prev, characters: newCharacters };
-            });
-          } catch (error) {
-            console.error(`Failed to generate image for character ${char.prototype}:`, error);
-          } finally {
-            checkFinished();
-          }
-        });
+        // 1. 并行生成角色和场景设计图片 (作为基础素材)
+        const resourcePromises = [
+          // 生成角色图片
+          ...characters.map(async (char: any, index: number) => {
+            try {
+              const charPrompt = `艺术风格：${artStyle}。角色描述：${char.description}。画面要求：全身站立，无动作，纯白背景，无背景，仅角色，高质量，杰作，原创设计。Safe for work, avoid copyright.`;
+              const response = await llmClient.generateImage(charPrompt, '1728x2304');
+              imageUrls[char.id] = response.url;
+              
+              setSkeleton((prev: VideoSkeleton | null) => {
+                if (!prev) return null;
+                const newCharacters = [...prev.characters];
+                newCharacters[index] = { ...newCharacters[index], imageUrl: response.url };
+                return { ...prev, characters: newCharacters };
+              });
+            } catch (error) {
+              console.error(`Failed to generate image for character ${char.prototype}:`, error);
+            } finally {
+              checkFinished();
+            }
+          }),
+          
+          // 生成场景设计图片
+          ...sceneDesigns.map(async (sd: any, index: number) => {
+            try {
+              const scenePrompt = `艺术风格：${artStyle}。场景描述：${sd.description}。画面要求：无角色，空场景，仅背景，高质量，杰作，原创设计。Safe for work, avoid copyright.`;
+              const response = await llmClient.generateImage(scenePrompt, '2560x1440');
+              imageUrls[sd.id] = response.url;
 
-        // 并行生成场景设计图片
-        sceneDesigns.forEach(async (sd: any, index: number) => {
-          try {
-            const scenePrompt = `${artStyle}, ${sd.description}, no characters, empty scene, background only, high quality, masterpiece, original environment design, avoid copyright, safe for work`;
-            const response = await llmClient.generateImage(scenePrompt, '2560x1440');
-            setSkeleton((prev: VideoSkeleton | null) => {
-              if (!prev) return null;
-              const newSceneDesigns = [...prev.sceneDesigns];
-              newSceneDesigns[index] = { ...newSceneDesigns[index], imageUrl: response.url };
-              return { ...prev, sceneDesigns: newSceneDesigns };
-            });
-          } catch (error) {
-            console.error(`Failed to generate image for scene design ${sd.prototype}:`, error);
-          } finally {
-            checkFinished();
-          }
-        });
+              setSkeleton((prev: VideoSkeleton | null) => {
+                if (!prev) return null;
+                const newSceneDesigns = [...prev.sceneDesigns];
+                newSceneDesigns[index] = { ...newSceneDesigns[index], imageUrl: response.url };
+                return { ...prev, sceneDesigns: newSceneDesigns };
+              });
+            } catch (error) {
+              console.error(`Failed to generate image for scene design ${sd.prototype}:`, error);
+            } finally {
+              checkFinished();
+            }
+          })
+        ];
 
-        // 并行生成分镜头图片
+        // 等待基础素材生成完成 (不管成功失败都继续，尽力而为)
+        await Promise.all(resourcePromises);
+
+        // 2. 并行生成分镜头图片 (引用已生成的素材)
         formattedFinalScenes.forEach(async (scene: any, index: number) => {
           try {
             const sceneCharacters = characters.filter((c: any) => scene.characterIds?.includes(c.id));
             const sceneBaseDesign = sceneDesigns.find((sd: any) => sd.id === scene.sceneId);
             
+            // 使用本地缓存的 URL 构建参考图列表
             const referenceImages = [
-              ...sceneCharacters.map((c: any) => c.imageUrl).filter((url: any): url is string => !!url),
-              ...(sceneBaseDesign?.imageUrl ? [sceneBaseDesign.imageUrl] : [])
+              ...sceneCharacters.map((c: any) => imageUrls[c.id]).filter((url: string | undefined): url is string => !!url),
+              ...(sceneBaseDesign && imageUrls[sceneBaseDesign.id] ? [imageUrls[sceneBaseDesign.id]] : [])
             ];
 
             let imageRefPrompts = '';
             let currentImgIdx = 1;
             
             sceneCharacters.forEach((c: any) => {
-              if (c.imageUrl) {
+              if (imageUrls[c.id]) {
                 imageRefPrompts += `[图${currentImgIdx}]是角色"${c.prototype}"的原型图，描述为：${c.description}。`;
                 currentImgIdx++;
               }
             });
             
-            if (sceneBaseDesign?.imageUrl) {
+            if (sceneBaseDesign && imageUrls[sceneBaseDesign.id]) {
               imageRefPrompts += `[图${currentImgIdx}]是场景"${sceneBaseDesign.prototype}"的底图，描述为：${sceneBaseDesign.description}。`;
             }
 

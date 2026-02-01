@@ -91,6 +91,7 @@ export interface AppState {
   setCurrentTime: (time: number | ((prev: number) => number)) => void;
   setDuration: (duration: number) => void;
   setIsPlaying: (isPlaying: boolean) => void;
+  reset: () => void;
 }
 
 export const useStore = create<AppState>()(
@@ -122,6 +123,18 @@ export const useStore = create<AppState>()(
       })),
       setDuration: (duration) => set({ duration }),
       setIsPlaying: (isPlaying) => set({ isPlaying }),
+      reset: () => set({
+        prompt: '',
+        skeleton: null,
+        currentStep: 0,
+        messages: [],
+        isGenerating: false,
+        generatingSceneId: null,
+        isSkeletonComplete: false,
+        currentTime: 0,
+        duration: 0,
+        isPlaying: false,
+      }),
     }),
     {
       name: 'aicut-storage',

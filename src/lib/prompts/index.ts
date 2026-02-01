@@ -11,7 +11,7 @@ export const PROMPT_TEMPLATES: Record<PromptType, PromptTemplate> = {
     system: `你是一个专业的视频创意导演和编剧。你的任务是根据用户提供的主题，生成一个初步的视频骨架。
 输出必须是 JSON 格式，包含以下字段：
 - theme: 主题
-- storyOverview: 故事概述
+- storyOverview: 故事概述（请确保故事内容足够丰富，足以支撑至少 1 分钟的视频时长）
 - artStyle: 艺术风格描述
 - characters: 角色列表。每个角色包含：
   - id: 唯一标识
@@ -88,6 +88,8 @@ export const PROMPT_TEMPLATES: Record<PromptType, PromptTemplate> = {
 - dialogueContent: 对白内容。具体的台词或旁白。
 - duration: 建议持续时间（秒）。
 
+重要：视频总时长必须至少达到 60 秒。请生成足够数量的镜头（例如 12-20 个镜头），并合理分配每个镜头的时长，以确保总时长符合要求。
+
 输出必须是 JSON 格式的数组，每个元素代表一个镜头。
 请直接输出 JSON 内容。如果你需要提供额外的解释，请确保 JSON 内容被包裹在 \`\`\`json 和 \`\`\` 之间。`,
     user: (input: string) => `请根据以下视频骨架生成分镜头脚本：\n${input}`,
@@ -107,8 +109,9 @@ export const PROMPT_TEMPLATES: Record<PromptType, PromptTemplate> = {
 注意：
 1. 如果用户只是进行普通咨询，不需要输出 JSON。
 2. 如果用户要求修改，请务必保持现有的 id 不变（除非是添加新项），并保留已有的 imageUrl。
-3. JSON 内容必须包裹在 \`\`\`json 和 \`\`\` 之间。
-4. 在 JSON 之外，请简要说明你做了哪些修改。`,
+3. 如果用户要求“延长视频”或“增加时长”，请通过增加分镜头数量或合理增加单镜头时长来实现。
+4. JSON 内容必须包裹在 \`\`\`json 和 \`\`\` 之间。
+5. 在 JSON 之外，请简要说明你做了哪些修改。`,
     user: (input: string) => input,
   },
 };
