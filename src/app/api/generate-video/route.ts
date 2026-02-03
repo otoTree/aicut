@@ -43,6 +43,7 @@ export async function POST(req: Request) {
     const payload = {
       model,
       content,
+      generate_audionew: true,
       ...params,
     };
 

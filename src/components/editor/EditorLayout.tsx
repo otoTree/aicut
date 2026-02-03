@@ -5,14 +5,19 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { SkeletonEditor } from '@/components/editor/SkeletonEditor';
 import { VideoPreview } from '@/components/editor/VideoPreview';
 import { AIChat } from '@/components/editor/AIChat';
+import { SeriesLayout } from '@/components/series';
 import { motion } from 'framer-motion';
 import { ChevronLeft, Loader2, FileJson, Film } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useVideoExporter } from '@/lib/useVideoExporter';
 
 export function EditorLayout() {
-  const { setView, skeleton } = useStore();
+  const { setView, skeleton, mode } = useStore();
   const { exportVideo, isExporting, progress } = useVideoExporter();
+
+  if (mode === 'series') {
+    return <SeriesLayout />;
+  }
 
   const handleExportJson = () => {
     if (!skeleton) return;

@@ -397,6 +397,25 @@ ${imageRefPrompts}
           <span>•</span>
           <span>教育科普</span>
         </motion.div>
+        
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ delay: 0.9, duration: 1 }}
+          className="mt-4 flex justify-center"
+        >
+          <Button 
+             variant="ghost" 
+             className="text-black/40 hover:text-black/80 hover:bg-black/5 rounded-full text-xs font-light"
+             onClick={() => {
+               useStore.getState().reset();
+               useStore.getState().setMode('series');
+               useStore.getState().setView('editor');
+             }}
+           >
+             切换到长篇小说/多集模式
+           </Button>
+        </motion.div>
       </div>
 
 

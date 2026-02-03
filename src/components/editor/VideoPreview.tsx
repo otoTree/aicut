@@ -106,7 +106,13 @@ export function VideoPreview() {
       setGeneratingSceneId(scene.id);
       
       try {
-        const { id: taskId } = await llmClient.generateVideo(scene.visualDescription, scene.imageUrl);
+        // Construct prompt with dialogue for lip-sync
+        let finalPrompt = scene.visualDescription;
+        if (scene.dialogueContent) {
+          finalPrompt = `${scene.visualDescription} Character says: "${scene.dialogueContent}"`;
+        }
+
+        const { id: taskId } = await llmClient.generateVideo(finalPrompt, scene.imageUrl);
         
         let attempts = 0;
         const maxAttempts = 60;

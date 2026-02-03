@@ -18,6 +18,8 @@ export const metadata: Metadata = {
   description: "A refined Next.js starter with Shadcn, Zustand, and PostgreSQL",
 };
 
+import { Toaster } from "@/components/ui/sonner";
+
 export default function RootLayout({
   children,
 }: Readonly<{
@@ -31,6 +33,7 @@ export default function RootLayout({
         playfair.variable
       )}>
         {children}
+        <Toaster />
       </body>
     </html>
   );

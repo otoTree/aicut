@@ -94,7 +94,14 @@ export function AIChat() {
 
       try {
         console.log(`Starting video generation for scene ${i}...`);
-        const { id: taskId } = await llmClient.generateVideo(scene.visualDescription, scene.imageUrl);
+        
+        // Construct prompt with dialogue for lip-sync
+        let finalPrompt = scene.visualDescription;
+        if (scene.dialogueContent) {
+          finalPrompt = `${scene.visualDescription} Character says: "${scene.dialogueContent}"`;
+        }
+
+        const { id: taskId } = await llmClient.generateVideo(finalPrompt, scene.imageUrl);
         
         // 轮询状态
         let attempts = 0;
