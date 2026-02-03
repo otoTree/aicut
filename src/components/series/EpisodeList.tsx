@@ -91,13 +91,35 @@ export function EpisodeList() {
         audioUrl: ''
       }));
 
+      // Initialize Tracks
+      let elapsed = 0;
+      const initialTracks = [{
+         id: 'main-track',
+         name: 'Track 1',
+         clips: initialScenes.map((s: any) => {
+            const dur = s.duration || 3;
+            const clip = {
+               id: `v-${s.id}`,
+               type: 'video' as const,
+               startTime: elapsed,
+               duration: dur,
+               content: s.visualDescription,
+               sceneId: s.id,
+               imageUrl: ''
+            };
+            elapsed += dur;
+            return clip;
+         })
+      }];
+
       const skeletonData: VideoSkeleton = {
         theme: scriptData.theme,
         storyOverview: scriptData.storyOverview,
         artStyle: seriesBible.artStyle,
         characters: seriesBible.characters,
         sceneDesigns: seriesBible.sceneDesigns,
-        scenes: initialScenes
+        scenes: initialScenes,
+        tracks: initialTracks
       };
 
       // Immediate Update to UI (One-click feedback)
@@ -149,7 +171,83 @@ export function EpisodeList() {
         }
       }
 
-      toast.success('分镜细节补充完成', { id: toastId });
+      // Step 3: Generate Images for Scenes
+      toast.message('正在生成分镜画面...', { id: toastId });
+
+      const scenesWithImages = [...scenes];
+      const imageConcurrency = 3;
+      const scenesQueue = scenesWithImages.map((s, i) => ({ scene: s, index: i }));
+
+      const processImageGeneration = async () => {
+        if (scenesQueue.length === 0) return;
+
+        const item = scenesQueue.shift();
+        if (!item) return;
+        const { scene, index } = item;
+
+        try {
+          // Construct prompt
+          const sceneCharacters = seriesBible.characters.filter(c => scene.characterIds?.includes(c.id));
+          const sceneBaseDesign = seriesBible.sceneDesigns.find(sd => sd.id === scene.sceneId);
+
+          const referenceImages = [
+            ...sceneCharacters.map(c => c.imageUrl).filter((url): url is string => !!url),
+            ...(sceneBaseDesign?.imageUrl ? [sceneBaseDesign.imageUrl] : [])
+          ];
+
+          let prompt = `艺术风格：${seriesBible.artStyle}。`;
+          prompt += `画面描述：${scene.visualDescription}。`;
+          if (scene.cameraDesign) prompt += ` 镜头语言：${scene.cameraDesign}。`;
+          prompt += ` 高质量，电影感，8k分辨率。`;
+
+          // Generate Image
+          const response = await llmClient.generateImage(prompt, '1920x1080', referenceImages);
+
+          // Update local array
+          scenesWithImages[index] = { ...scenesWithImages[index], imageUrl: response.url };
+
+          // Rebuild tracks to include new image
+          let currentElapsed = 0;
+          const newTracks = [{
+             id: 'main-track',
+             name: 'Track 1',
+             clips: scenesWithImages.map((s) => {
+                const dur = s.duration || 3;
+                const clip = {
+                   id: `v-${s.id}`,
+                   type: 'video' as const,
+                   startTime: currentElapsed,
+                   duration: dur,
+                   content: s.visualDescription,
+                   sceneId: s.id,
+                   imageUrl: s.imageUrl
+                };
+                currentElapsed += dur;
+                return clip;
+             })
+          }];
+
+          // Update Store
+          const currentSkeleton = { ...skeletonData, scenes: [...scenesWithImages], tracks: newTracks };
+          updateEpisodeSkeleton(episodeId, currentSkeleton);
+
+          // Update view if this episode is currently selected
+          if (useStore.getState().currentEpisodeId === episodeId) {
+            setSkeleton(currentSkeleton);
+          }
+
+        } catch (error) {
+          console.error(`Failed to generate image for scene ${index}`, error);
+        }
+
+        if (scenesQueue.length > 0) {
+          await processImageGeneration();
+        }
+      };
+
+      await Promise.all(Array(imageConcurrency).fill(null).map(() => processImageGeneration()));
+
+      toast.success('分镜生成完成', { id: toastId });
 
     } catch (error: any) {
       console.error('Failed to generate episode:', error);

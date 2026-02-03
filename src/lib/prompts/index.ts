@@ -101,7 +101,7 @@ ${getLangInstruction(lang)}
   如果角色是旁白，请根据故事氛围选择合适的解说音色（如解说小明、悬疑解说等）。
 
 - dialogueContent: 对白内容。具体的台词或旁白。不需要多余的词语解释，只需要直接输出对白内容。
-- duration: 建议持续时间（秒）。
+- duration: 建议持续时间（秒）。必须是 4 到 12 之间的整数。
 
 重要：视频总时长必须至少达到 60 秒。请生成足够数量的镜头（例如 12-20 个镜头），并合理分配每个镜头的时长，以确保总时长符合要求。
 
@@ -126,7 +126,7 @@ ${getLangInstruction(lang)}
 注意：
 1. 如果用户只是进行普通咨询，不需要输出 JSON。
 2. 如果用户要求修改，请务必保持现有的 id 不变（除非是添加新项），并保留已有的 imageUrl。
-3. 如果用户要求“延长视频”或“增加时长”，请通过增加分镜头数量或合理增加单镜头时长来实现。
+3. 如果用户要求“延长视频”或“增加时长”，请通过增加分镜头数量或合理增加单镜头时长来实现。注意单镜头 duration 必须是 4 到 12 之间的整数。
 4. JSON 内容必须包裹在 \`\`\`json 和 \`\`\` 之间。
 5. 在 JSON 之外，请简要说明你做了哪些修改。`,
     user: (input, lang) => input,
@@ -176,7 +176,7 @@ ${getLangInstruction(lang)}
   - id: 唯一标识 (建议使用 s_1, s_2 等)
   - action: 简短的剧情动作描述 (例如：林婉清走进咖啡厅，神色匆忙)
   - dialogueContent: 对白内容 (如有)
-  - duration: 建议时长 (秒)
+  - duration: 建议时长 (秒)。必须是 4 到 12 之间的整数。
   - characterIds: 参与此镜头的角色 ID 列表 (仅引用 ID)
   - sceneId: 此镜头所处的场景 ID (仅引用 ID)
 
@@ -238,8 +238,8 @@ ${getLangInstruction(lang)}
   - audioDesign: 音频设计。
   - voiceActor: 配音角色 ID。
   - dialogueContent: 对白内容。
-  - duration: 建议时长（秒）。
-
+  - duration: 建议时长（秒）。必须是 4 到 12 之间的整数。
+  
 请直接输出 JSON 内容。如果你需要提供额外的解释，请确保 JSON 内容被包裹在 \`\`\`json 和 \`\`\` 之间。`,
     user: (input, lang) => `请根据以下信息生成第 ${JSON.parse(input).index} 集的分镜头脚本：\n${input}`,
   },

@@ -2,14 +2,27 @@
 
 import { useStore } from '@/store/useStore';
 import Image from 'next/image';
-import { Play, Pause, RotateCcw, Volume2, Maximize2, Sparkles, Loader2 } from 'lucide-react';
+import { Play, Pause, RotateCcw, Volume2, VolumeX, Maximize2, Sparkles, Loader2, Download, Film } from 'lucide-react';
 import { Timeline } from './Timeline';
-import { useEffect, useMemo, useState, useRef } from 'react';
+import { useEffect, useMemo, useState, useRef, useCallback } from 'react';
 import { cn } from '@/lib/utils';
 import { llmClient } from '@/lib/llm/client';
 import { db } from '@/lib/db-client';
+import { useVideoExporter } from '@/lib/useVideoExporter';
 
-function BackgroundVideo({ url, isActive, isPlaying }: { url: string, isActive: boolean, isPlaying: boolean }) {
+function BackgroundVideo({ 
+  url, 
+  isActive, 
+  isPlaying, 
+  isMuted,
+  onDurationLoaded 
+}: { 
+  url: string, 
+  isActive: boolean, 
+  isPlaying: boolean, 
+  isMuted: boolean,
+  onDurationLoaded?: (duration: number) => void
+}) {
   const videoRef = useRef<HTMLVideoElement>(null);
 
   useEffect(() => {
@@ -21,6 +34,9 @@ function BackgroundVideo({ url, isActive, isPlaying }: { url: string, isActive: 
   useEffect(() => {
     if (!videoRef.current) return;
     
+    // Sync mute state
+    videoRef.current.muted = isMuted;
+
     if (isActive && isPlaying) {
       const playPromise = videoRef.current.play();
       if (playPromise !== undefined) {
@@ -29,15 +45,21 @@ function BackgroundVideo({ url, isActive, isPlaying }: { url: string, isActive: 
     } else {
       videoRef.current.pause();
     }
-  }, [isActive, isPlaying]);
+  }, [isActive, isPlaying, isMuted]);
 
   return (
     <video 
       ref={videoRef}
       src={url} 
-      muted 
+      muted={isMuted}
       loop 
       preload="auto"
+      onLoadedMetadata={(e) => {
+        const duration = e.currentTarget.duration;
+        if (duration && duration !== Infinity) {
+          onDurationLoaded?.(duration);
+        }
+      }}
       className={cn(
         "absolute inset-0 w-full h-full object-cover transition-opacity duration-300",
         isActive ? "opacity-100 z-10" : "opacity-0 z-0"
@@ -46,12 +68,14 @@ function BackgroundVideo({ url, isActive, isPlaying }: { url: string, isActive: 
   );
 }
 
-function BackgroundAudio({ url, isActive, isPlaying, currentTime, startTime }: { url: string, isActive: boolean, isPlaying: boolean, currentTime: number, startTime: number }) {
+function BackgroundAudio({ url, isActive, isPlaying, currentTime, startTime, isMuted }: { url: string, isActive: boolean, isPlaying: boolean, currentTime: number, startTime: number, isMuted: boolean }) {
   const audioRef = useRef<HTMLAudioElement>(null);
 
   useEffect(() => {
     if (!audioRef.current) return;
     
+    audioRef.current.muted = isMuted;
+
     if (isActive) {
       // Sync time if needed (allow 0.5s drift)
       const expectedTime = Math.max(0, currentTime - startTime);
@@ -68,7 +92,7 @@ function BackgroundAudio({ url, isActive, isPlaying, currentTime, startTime }: {
       audioRef.current.pause();
       // audioRef.current.currentTime = 0; // Optional: reset
     }
-  }, [isActive, isPlaying, currentTime, startTime]);
+  }, [isActive, isPlaying, currentTime, startTime, isMuted]);
 
   return <audio ref={audioRef} src={url} />;
 }
@@ -86,8 +110,11 @@ export function VideoPreview() {
     generatingSceneId,
     setGeneratingSceneId
   } = useStore();
+  const [isMuted, setIsMuted] = useState(false);
 
   const [isRegeneratingAll, setIsRegeneratingAll] = useState(false);
+
+  const { exportVideo, isExporting, progress: exportProgress } = useVideoExporter();
 
   const handleRegenerateAll = async () => {
     if (isRegeneratingAll || !skeleton || skeleton.scenes.length === 0) return;
@@ -314,12 +341,108 @@ export function VideoPreview() {
   const generatingIndex = generatingSceneId ? scenes.findIndex(s => s.id === generatingSceneId) : -1;
   const generatingScene = generatingSceneId ? scenes.find(s => s.id === generatingSceneId) : null;
 
+  const handleDurationLoaded = useCallback((url: string, duration: number) => {
+    setSkeleton(prev => {
+      if (!prev) return null;
+      let hasChanges = false;
+      
+      // Update Scenes
+      const newScenes = prev.scenes.map(scene => {
+        if (scene.videoUrl === url && Math.abs((scene.duration || 0) - duration) > 0.1) {
+          hasChanges = true;
+          return { ...scene, duration };
+        }
+        return scene;
+      });
+
+      // Update Tracks
+      const newTracks = prev.tracks?.map(track => {
+        // Only process Track 1 (assuming it's the main video track)
+        if (track.name === 'Track 1') {
+           const newClips = [...track.clips];
+           let trackChanged = false;
+           
+           for (let i = 0; i < newClips.length; i++) {
+               const clip = newClips[i];
+               if (clip.type === 'video' && clip.videoUrl === url) {
+                   const oldDuration = clip.duration;
+                   if (Math.abs(oldDuration - duration) > 0.1) {
+                       // Update duration
+                       newClips[i] = { ...clip, duration };
+                       trackChanged = true;
+                       hasChanges = true;
+                       
+                       // Ripple effect: shift all subsequent clips
+                       const diff = duration - oldDuration;
+                       for (let j = i + 1; j < newClips.length; j++) {
+                           newClips[j] = { 
+                               ...newClips[j], 
+                               startTime: newClips[j].startTime + diff 
+                           };
+                       }
+                   }
+               }
+           }
+           return trackChanged ? { ...track, clips: newClips } : track;
+        }
+        return track;
+      }) || [];
+
+      if (!hasChanges) return prev;
+      return { ...prev, scenes: newScenes, tracks: newTracks };
+    });
+  }, [setSkeleton]);
+
+  const handleDownload = async () => {
+    const videoUrl = activeClips.video?.videoUrl;
+    if (!videoUrl) return;
+
+    try {
+      const response = await fetch(videoUrl);
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `scene-${activeClips.video?.id || 'video'}-${Date.now()}.mp4`;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+    } catch (error) {
+      console.error('Download failed:', error);
+      window.open(videoUrl, '_blank');
+    }
+  };
+
   return (
     <div className="h-full flex flex-col bg-white overflow-y-auto">
       {/* Video Player Section */}
       <div className="flex-1 flex flex-col items-center justify-center p-8 bg-zinc-50/30 relative">
-        {/* Regenerate All Button */}
-        <div className="absolute top-8 right-8 z-20">
+        {/* Top Controls */}
+        <div className="absolute top-8 right-8 z-20 flex items-center gap-3">
+          {/* Export Button */}
+          <button
+            onClick={() => skeleton && exportVideo(skeleton)}
+            disabled={isExporting || !skeleton || skeleton.scenes.filter(s => s.videoUrl).length === 0}
+            className={cn(
+              "flex items-center gap-2 px-4 py-2 bg-black text-white rounded-full shadow-lg hover:bg-black/80 transition-all text-[10px] uppercase tracking-widest font-medium disabled:opacity-50 disabled:cursor-not-allowed",
+              isExporting && "cursor-wait"
+            )}
+          >
+            {isExporting ? (
+              <>
+                <Loader2 className="w-3 h-3 animate-spin" />
+                导出中 {exportProgress}%
+              </>
+            ) : (
+              <>
+                <Film className="w-3 h-3" />
+                导出全片
+              </>
+            )}
+          </button>
+
+          {/* Regenerate All Button */}
           <button
             onClick={handleRegenerateAll}
             disabled={isRegeneratingAll || !skeleton}
@@ -353,6 +476,8 @@ export function VideoPreview() {
                 url={url}
                 isActive={url === activeClips.video?.videoUrl}
                 isPlaying={isPlaying}
+                isMuted={isMuted}
+                onDurationLoaded={(d) => handleDurationLoaded(url, d)}
               />
             ))}
 
@@ -366,6 +491,7 @@ export function VideoPreview() {
                   isPlaying={isPlaying}
                   currentTime={currentTime}
                   startTime={activeClip?.startTime || 0}
+                  isMuted={isMuted}
                 />
               );
             })}
@@ -440,7 +566,19 @@ export function VideoPreview() {
                 </span>
               </div>
               <div className="flex items-center gap-4">
-                <Volume2 className="w-4 h-4 text-white cursor-pointer" />
+                {activeClips.video?.videoUrl && (
+                  <Download 
+                    className="w-4 h-4 text-white cursor-pointer hover:scale-110 transition-transform" 
+                    onClick={handleDownload}
+                  />
+                )}
+                <button onClick={() => setIsMuted(!isMuted)}>
+                  {isMuted ? (
+                    <VolumeX className="w-4 h-4 text-white cursor-pointer" />
+                  ) : (
+                    <Volume2 className="w-4 h-4 text-white cursor-pointer" />
+                  )}
+                </button>
                 <RotateCcw 
                   className="w-4 h-4 text-white cursor-pointer" 
                   onClick={() => {

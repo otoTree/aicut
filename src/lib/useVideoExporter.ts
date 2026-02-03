@@ -59,17 +59,33 @@ export function useVideoExporter() {
       const ctx = canvas.getContext('2d');
       if (!ctx) throw new Error('Failed to get canvas context');
 
+      // Setup Audio Context
+      const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+      const dest = audioCtx.createMediaStreamDestination();
+      let sourceNode: MediaElementAudioSourceNode | null = null;
+
       // Fill black background initially
       ctx.fillStyle = '#000';
       ctx.fillRect(0, 0, canvas.width, canvas.height);
 
       // Setup Recorder
-      const stream = canvas.captureStream(30); // 30 FPS
-      const mimeType = MediaRecorder.isTypeSupported('video/webm;codecs=vp9') 
-        ? 'video/webm;codecs=vp9' 
-        : 'video/webm';
+      const canvasStream = canvas.captureStream(30); // 30 FPS
+      const audioTrack = dest.stream.getAudioTracks()[0];
+      const combinedStream = new MediaStream([
+        ...canvasStream.getVideoTracks(),
+        ...(audioTrack ? [audioTrack] : [])
+      ]);
+
+      // Try to use MP4 directly if supported (Safari), otherwise fallback to WebM
+      const mimeType = MediaRecorder.isTypeSupported('video/mp4')
+        ? 'video/mp4'
+        : MediaRecorder.isTypeSupported('video/webm;codecs=vp9') 
+          ? 'video/webm;codecs=vp9' 
+          : 'video/webm';
       
-      const recorder = new MediaRecorder(stream, { mimeType });
+      console.log('Using mimeType:', mimeType);
+      
+      const recorder = new MediaRecorder(combinedStream, { mimeType });
       const chunks: Blob[] = [];
       
       recorder.ondataavailable = (e) => {
@@ -81,12 +97,21 @@ export function useVideoExporter() {
       // Setup hidden video element
       const video = document.createElement('video');
       video.crossOrigin = 'anonymous';
-      video.muted = true;
+      video.muted = false; // Must be unmuted to capture audio
+      video.volume = 1;
       video.playsInline = true;
       video.style.position = 'fixed';
       video.style.top = '-9999px';
       video.style.left = '-9999px';
       document.body.appendChild(video);
+
+      // Connect video audio to destination
+      try {
+        sourceNode = audioCtx.createMediaElementSource(video);
+        sourceNode.connect(dest);
+      } catch (e) {
+        console.warn('Failed to create media element source', e);
+      }
 
       const scenes = skeleton.scenes.filter(s => s.videoUrl);
       const totalScenes = scenes.length;
@@ -158,36 +183,75 @@ export function useVideoExporter() {
 
       // Stop recording
       document.body.removeChild(video);
+      sourceNode?.disconnect();
+      audioCtx.close();
       recorder.stop();
       
       await new Promise<void>(resolve => {
           recorder.onstop = () => resolve();
       });
 
-      // Convert to MP4
+      // Download directly if already MP4 or if we should skip FFmpeg
+      const isMp4Native = mimeType.includes('mp4');
+      const canRunFFmpeg = typeof window !== 'undefined' && window.crossOriginIsolated;
+      
+      if (isMp4Native || !canRunFFmpeg) {
+         if (!isMp4Native) {
+           console.warn('Environment not cross-origin isolated or FFmpeg not supported. Skipping transcoding and downloading WebM.');
+           // alert('当前环境不支持高性能转码，将直接下载 WebM 格式视频。');
+         }
+
+         const blob = new Blob(chunks, { type: mimeType });
+         const url = URL.createObjectURL(blob);
+         const a = document.createElement('a');
+         a.href = url;
+         a.download = `${skeleton.theme || 'video'}.${isMp4Native ? 'mp4' : 'webm'}`;
+         document.body.appendChild(a);
+         a.click();
+         document.body.removeChild(a);
+         URL.revokeObjectURL(url);
+         
+         setProgress(100);
+         return;
+      }
+
+      // Convert to MP4 using FFmpeg (only if environment supports it)
       const webmBlob = new Blob(chunks, { type: 'video/webm' });
       
-      // Load FFmpeg
-      const ffmpeg = await loadFFmpeg();
-      await ffmpeg.writeFile('input.webm', await fetchFile(webmBlob));
+      try {
+        // Load FFmpeg
+        const ffmpeg = await loadFFmpeg();
+        await ffmpeg.writeFile('input.webm', await fetchFile(webmBlob));
 
-      // Transcode
-      setProgress(90);
-      await ffmpeg.exec(['-i', 'input.webm', '-c:v', 'libx264', '-preset', 'ultrafast', 'output.mp4']);
-      
-      // Read output
-      const data = await ffmpeg.readFile('output.mp4');
-      const mp4Blob = new Blob([new Uint8Array(data as any)], { type: 'video/mp4' });
+        // Transcode
+        setProgress(90);
+        await ffmpeg.exec(['-i', 'input.webm', '-c:v', 'libx264', '-preset', 'ultrafast', 'output.mp4']);
+        
+        // Read output
+        const data = await ffmpeg.readFile('output.mp4');
+        const mp4Blob = new Blob([new Uint8Array(data as any)], { type: 'video/mp4' });
 
-      // Download
-      const url = URL.createObjectURL(mp4Blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `${skeleton.theme || 'video'}.mp4`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
+        // Download
+        const url = URL.createObjectURL(mp4Blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${skeleton.theme || 'video'}.mp4`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      } catch (e) {
+        console.error('FFmpeg transcoding failed, falling back to WebM', e);
+        // Fallback to WebM
+        const url = URL.createObjectURL(webmBlob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${skeleton.theme || 'video'}.webm`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      }
       
       setProgress(100);
 

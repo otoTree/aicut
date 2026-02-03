@@ -18,8 +18,68 @@ export function BibleReview({ onNext }: BibleReviewProps) {
   const { seriesBible, setSeriesBible, setEpisodes, novelContent } = useStore();
   const [generatingIds, setGeneratingIds] = useState<Set<string>>(new Set());
   const [isSegmenting, setIsSegmenting] = useState(false);
+  const [isGeneratingAll, setIsGeneratingAll] = useState(false);
 
   if (!seriesBible) return null;
+
+  const handleGenerateAllImages = async () => {
+    if (isGeneratingAll) return;
+    setIsGeneratingAll(true);
+    
+    try {
+      const currentBible = useStore.getState().seriesBible;
+      if (!currentBible) return;
+
+      const charTasks = currentBible.characters.filter(c => !c.imageUrl).map(c => ({ ...c, type: 'characters' as const }));
+      const sceneTasks = currentBible.sceneDesigns.filter(s => !s.imageUrl).map(s => ({ ...s, type: 'sceneDesigns' as const }));
+      const allTasks = [...charTasks, ...sceneTasks];
+
+      for (const task of allTasks) {
+        if (generatingIds.has(task.id)) continue;
+        
+        setGeneratingIds(prev => new Set(prev).add(task.id));
+        
+        try {
+          const latestBible = useStore.getState().seriesBible;
+          if (!latestBible) break;
+
+          const artStyle = latestBible.artStyle;
+          let finalPrompt = '';
+          let size = '1024x1024';
+
+          if (task.type === 'characters') {
+            finalPrompt = `艺术风格：${artStyle}。角色描述：${task.description}。画面要求：全身站立，无动作，纯白背景，无背景，仅角色，高质量，杰作，原创设计。Safe for work, avoid copyright.`;
+            size = '1728x2304';
+          } else {
+            finalPrompt = `艺术风格：${artStyle}。场景描述：${task.description}。画面要求：无角色，空场景，仅背景，高质量，杰作，原创设计。Safe for work, avoid copyright.`;
+            size = '2560x1440';
+          }
+          
+          const response = await llmClient.generateImage(finalPrompt, size);
+          
+          const bibleToUpdate = useStore.getState().seriesBible;
+          if (bibleToUpdate) {
+            setSeriesBible({
+              ...bibleToUpdate,
+              [task.type]: (bibleToUpdate[task.type] as any[]).map((item: any) => 
+                item.id === task.id ? { ...item, imageUrl: response.url } : item
+              )
+            });
+          }
+        } catch (error) {
+          console.error('Failed to generate image:', error);
+        } finally {
+          setGeneratingIds(prev => {
+            const next = new Set(prev);
+            next.delete(task.id);
+            return next;
+          });
+        }
+      }
+    } finally {
+      setIsGeneratingAll(false);
+    }
+  };
 
   const handleGenerateImage = async (id: string, description: string, type: 'characters' | 'sceneDesigns') => {
     if (generatingIds.has(id)) return;
@@ -105,11 +165,30 @@ export function BibleReview({ onNext }: BibleReviewProps) {
             <h1 className="text-2xl font-serif font-medium">剧集圣经 (Series Bible)</h1>
             <p className="text-black/40 text-sm mt-2">确认全剧通用的角色和场景设定，确保系列一致性。</p>
           </div>
-          <Button
-            onClick={handleSegmentEpisodes}
-            disabled={isSegmenting}
-            className="bg-black text-white hover:bg-black/80 rounded-full px-6"
-          >
+          <div className="flex gap-3">
+            <Button
+              variant="outline"
+              onClick={handleGenerateAllImages}
+              disabled={isGeneratingAll || isSegmenting}
+              className="rounded-full px-6"
+            >
+              {isGeneratingAll ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  正在生成...
+                </>
+              ) : (
+                <>
+                  <Sparkles className="w-4 h-4 mr-2" />
+                  一键生成图片
+                </>
+              )}
+            </Button>
+            <Button
+              onClick={handleSegmentEpisodes}
+              disabled={isSegmenting}
+              className="bg-black text-white hover:bg-black/80 rounded-full px-6"
+            >
             {isSegmenting ? (
               <>
                 <Loader2 className="w-4 h-4 mr-2 animate-spin" />
@@ -123,6 +202,7 @@ export function BibleReview({ onNext }: BibleReviewProps) {
             )}
           </Button>
         </div>
+      </div>
 
         {/* Art Style */}
         <div className="space-y-4">

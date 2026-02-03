@@ -508,6 +508,22 @@ ${imageRefPrompts}
     }
   };
 
+  const handleGenerateAllImages = async () => {
+    if (!skeleton) return;
+    
+    // Find all scenes without image
+    const scenesToGenerate = skeleton.scenes.filter(s => !s.imageUrl && !generatingIds.has(s.id));
+    
+    if (scenesToGenerate.length === 0) return;
+
+    // Process sequentially
+    for (const scene of scenesToGenerate) {
+      await handleGenerateImage(scene.id, scene.visualDescription, 'scenes');
+      // Small delay between requests
+      await new Promise(resolve => setTimeout(resolve, 500));
+    }
+  };
+
   const renderStepContent = () => {
     switch (currentStep) {
       case 0: // Story Overview
@@ -693,6 +709,18 @@ ${imageRefPrompts}
                     <Volume2 className="w-3 h-3" />
                   )}
                   <span className="text-[10px] font-medium">一键生成音频</span>
+                </button>
+                <button 
+                  onClick={handleGenerateAllImages}
+                  disabled={generatingIds.size > 0}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-black/[0.04] hover:bg-black/[0.08] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                >
+                  {generatingIds.size > 0 ? (
+                    <Loader2 className="w-3 h-3 animate-spin" />
+                  ) : (
+                    <Sparkles className="w-3 h-3" />
+                  )}
+                  <span className="text-[10px] font-medium">一键生成图片</span>
                 </button>
                 <button 
                   onClick={addScene}
