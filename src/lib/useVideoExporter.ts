@@ -1,7 +1,6 @@
 import { useState, useRef } from 'react';
 import { VideoSkeleton } from '@/store/useStore';
-import { FFmpeg } from '@ffmpeg/ffmpeg';
-import { fetchFile, toBlobURL } from '@ffmpeg/util';
+import { createFFmpeg, fetchFile, FFmpeg } from '@ffmpeg/ffmpeg';
 
 export function useVideoExporter() {
   const [isExporting, setIsExporting] = useState(false);
@@ -11,36 +10,11 @@ export function useVideoExporter() {
   const loadFFmpeg = async () => {
     if (ffmpegRef.current) return ffmpegRef.current;
 
-    const ffmpeg = new FFmpeg();
-    // Use v0.11.x core for better compatibility without SharedArrayBuffer (single-threaded)
-    // Note: ffmpeg.wasm 0.12.x strictly requires SharedArrayBuffer which needs COOP/COEP headers
-    // Since we removed those headers to allow cross-origin images, we must use a core that works without them.
-    // However, @ffmpeg/core 0.12.x doesn't have a single-threaded build easily available on unpkg.
-    // We will attempt to load the default one, but if it fails, we might need to fallback.
-    // Actually, simply removing the headers often breaks 0.12.x. 
-    // Let's try to use the single-threaded build if available, or stick to what we have and see if it runs (it likely won't).
-    // A safer bet for now without headers is to accept that MP4 export might fail or require a specific single-threaded core URL.
-    // Let's try using the latest 0.12.6 but acknowledge it might be slow or unstable without headers.
-    // Actually, without headers, SharedArrayBuffer is not defined. 0.12.x will throw error.
-    
-    // Changing to use 0.11.0 scripts for single threaded support is tricky with the 0.12.x API.
-    // Instead, we will keep the current URL but wrap the load in a try-catch to warn user.
-    // BETTER SOLUTION: Use the single-threaded build of 0.12.6 if it exists. 
-    // It seems 0.12.x dropped single-threaded support.
-    // So we are in a dilemma: COOP/COEP headers break images, but are needed for FFmpeg.
-    // User wants "Allow Cross Origin" (fix images).
-    // So we must prioritize images. If FFmpeg fails, we should fallback to WebM download or warn.
-    
-    // For now, let's keep the code as is but add error handling. 
-    // Wait, I can try to use the @ffmpeg/core-mt (multithreaded) vs @ffmpeg/core (single)? 
-    // No, default IS single threaded in some versions? No, default is MT.
-    
-    const baseURL = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd';
-    
-    await ffmpeg.load({
-      coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript'),
-      wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm'),
+    const ffmpeg = createFFmpeg({ 
+      log: true,
+      corePath: 'https://unpkg.com/@ffmpeg/core@0.11.0/dist/ffmpeg-core.js'
     });
+    await ffmpeg.load();
     
     ffmpegRef.current = ffmpeg;
     return ffmpeg;
@@ -59,8 +33,15 @@ export function useVideoExporter() {
       const ctx = canvas.getContext('2d');
       if (!ctx) throw new Error('Failed to get canvas context');
 
-      // Setup Audio Context
-      const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+      // Setup Audio Context with user interaction check
+      const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+      const audioCtx = new AudioContextClass();
+      
+      // Ensure AudioContext is resumed (browser policy often suspends it until interaction)
+      if (audioCtx.state === 'suspended') {
+        await audioCtx.resume();
+      }
+      
       const dest = audioCtx.createMediaStreamDestination();
       let sourceNode: MediaElementAudioSourceNode | null = null;
 
@@ -98,20 +79,26 @@ export function useVideoExporter() {
       const video = document.createElement('video');
       video.crossOrigin = 'anonymous';
       video.muted = false; // Must be unmuted to capture audio
-      video.volume = 1;
+      video.volume = 1.0;
       video.playsInline = true;
+      
+      // Critical: Connect video to audio context BEFORE setting src to ensure capture
+      try {
+        sourceNode = audioCtx.createMediaElementSource(video);
+        sourceNode.connect(dest);
+        // Also connect to destination to prevent "garbage collection" of audio processing
+        // but gainNode with 0 gain to speakers to avoid double audio if needed, 
+        // though here we just want it to go to 'dest' (MediaStream) for recording.
+      } catch (e) {
+        console.warn('Failed to create media element source', e);
+      }
+
       video.style.position = 'fixed';
       video.style.top = '-9999px';
       video.style.left = '-9999px';
       document.body.appendChild(video);
 
-      // Connect video audio to destination
-      try {
-        sourceNode = audioCtx.createMediaElementSource(video);
-        sourceNode.connect(dest);
-      } catch (e) {
-        console.warn('Failed to create media element source', e);
-      }
+      // Connect video audio to destination (Removed old block)
 
       const scenes = skeleton.scenes.filter(s => s.videoUrl);
       const totalScenes = scenes.length;
@@ -221,15 +208,16 @@ export function useVideoExporter() {
       try {
         // Load FFmpeg
         const ffmpeg = await loadFFmpeg();
-        await ffmpeg.writeFile('input.webm', await fetchFile(webmBlob));
+        ffmpeg.FS('writeFile', 'input.webm', await fetchFile(webmBlob));
 
-        // Transcode
+        // Transcode to MP4 with AAC audio
         setProgress(90);
-        await ffmpeg.exec(['-i', 'input.webm', '-c:v', 'libx264', '-preset', 'ultrafast', 'output.mp4']);
+        await ffmpeg.run('-i', 'input.webm', '-c:v', 'libx264', '-preset', 'ultrafast', '-c:a', 'aac', 'output.mp4');
         
         // Read output
-        const data = await ffmpeg.readFile('output.mp4');
-        const mp4Blob = new Blob([new Uint8Array(data as any)], { type: 'video/mp4' });
+        const data = ffmpeg.FS('readFile', 'output.mp4');
+        const buffer = data.buffer as ArrayBuffer;
+        const mp4Blob = new Blob([new Uint8Array(buffer)], { type: 'video/mp4' });
 
         // Download
         const url = URL.createObjectURL(mp4Blob);
