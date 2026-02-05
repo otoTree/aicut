@@ -1,11 +1,12 @@
 'use client';
 
 import { useState } from 'react';
-import { useStore, VideoSkeleton } from '@/store/useStore';
+import { useStore, VideoSkeleton, AspectRatio } from '@/store/useStore';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { motion } from 'framer-motion';
-import { Sparkles, ArrowRight } from 'lucide-react';
+import { Sparkles, ArrowRight, Monitor, Smartphone, Square } from 'lucide-react';
+import { cn } from '@/lib/utils';
 
 import { PromptFactory } from '@/lib/prompts';
 import { llmClient } from '@/lib/llm/client';
@@ -13,15 +14,18 @@ import { extractJSON, parsePartialJson } from '@/lib/utils';
 import { HistoryList } from './HistoryList';
 import { db } from '@/lib/db-client';
 import { getVoiceId } from '@/lib/tts/voices';
+import { getResolution } from '@/lib/utils/aspect-ratio';
 
 export function Hero() {
-  const { setPrompt, setView, setIsGenerating, setSkeleton, addMessage, setIsSkeletonComplete, reset } = useStore();
+  const { setPrompt, setView, setIsGenerating, setSkeleton, addMessage, setIsSkeletonComplete, reset, aspectRatio, setAspectRatio } = useStore();
   const [inputValue, setInputValue] = useState('');
 
   const handleGenerate = async () => {
     if (!inputValue.trim()) return;
     
+    const currentAspectRatio = aspectRatio;
     reset();
+    setAspectRatio(currentAspectRatio);
     setPrompt(inputValue);
     setView('editor');
     setIsGenerating(true);
@@ -42,6 +46,7 @@ export function Hero() {
             theme: '',
             storyOverview: '',
             artStyle: '',
+            aspectRatio: currentAspectRatio,
             characters: [],
             sceneDesigns: [],
             scenes: [],
@@ -53,6 +58,7 @@ export function Hero() {
 
       const skeletonData = extractJSON<VideoSkeleton>(fullContent);
       skeletonData.scenes = []; // 确保 scenes 为空，后续单独生成
+      skeletonData.aspectRatio = currentAspectRatio;
       setSkeleton(skeletonData);
       setIsGenerating(false);
 
@@ -168,7 +174,7 @@ export function Hero() {
 
       // 3. 异步生成图片补充
       const generateImages = async () => {
-        const { artStyle, characters, sceneDesigns } = skeletonData;
+        const { artStyle, characters, sceneDesigns, aspectRatio } = skeletonData;
         const totalImages = characters.length + sceneDesigns.length + formattedFinalScenes.length;
         let finishedCount = 0;
         
@@ -245,7 +251,7 @@ export function Hero() {
           ...sceneDesigns.map(async (sd: any, index: number) => {
             try {
               const scenePrompt = `艺术风格：${artStyle}。场景描述：${sd.description}。画面要求：无角色，空场景，仅背景，高质量，杰作，原创设计。Safe for work, avoid copyright.`;
-              const response = await llmClient.generateImage(scenePrompt, '2560x1440');
+              const response = await llmClient.generateImage(scenePrompt, getResolution(aspectRatio));
               imageUrls[sd.id] = response.url;
 
               setSkeleton((prev: VideoSkeleton | null) => {
@@ -298,7 +304,7 @@ ${imageRefPrompts}
 要求：请参考上述角色原型图和场景底图，将它们完美融合到当前镜头中。保持角色特征和场景氛围的一致性。
 注意：高质量、杰作、专业影视构图、原创设计、规避任何版权角色或标志、严禁色情、暴力或任何违规内容 (Safe for work, No NSFW, No copyright infringement)。`;
 
-            const response = await llmClient.generateImage(finalPrompt, '2560x1440', referenceImages.length > 0 ? referenceImages : undefined);
+            const response = await llmClient.generateImage(finalPrompt, getResolution(aspectRatio), referenceImages.length > 0 ? referenceImages : undefined);
             
             setSkeleton((prev: VideoSkeleton | null) => {
               if (!prev) return null;
@@ -381,6 +387,27 @@ ${imageRefPrompts}
               <ArrowRight className="w-5 h-5" />
             </Button>
           </div>
+
+          {/* Aspect Ratio Selector */}
+          <div className="flex justify-center gap-2 mt-6">
+            {(['16:9', '9:16', '1:1', '4:3', '3:4'] as AspectRatio[]).map((ratio) => (
+              <button
+                key={ratio}
+                onClick={() => setAspectRatio(ratio)}
+                className={cn(
+                  "px-4 py-1.5 rounded-full text-[10px] font-medium transition-all duration-300 flex items-center gap-1.5",
+                  aspectRatio === ratio 
+                    ? "bg-black text-white shadow-md transform scale-105" 
+                    : "bg-white/50 text-black/40 hover:bg-white/80 hover:text-black/80 hover:scale-105 backdrop-blur-sm"
+                )}
+              >
+                {ratio === '16:9' && <Monitor className="w-3 h-3" />}
+                {ratio === '9:16' && <Smartphone className="w-3 h-3" />}
+                {ratio === '1:1' && <Square className="w-3 h-3" />}
+                {ratio}
+              </button>
+            ))}
+          </div>
         </motion.div>
 
         <motion.div 
@@ -408,7 +435,9 @@ ${imageRefPrompts}
              variant="ghost" 
              className="text-black/40 hover:text-black/80 hover:bg-black/5 rounded-full text-xs font-light"
              onClick={() => {
+               const currentAspectRatio = useStore.getState().aspectRatio;
                useStore.getState().reset();
+               useStore.getState().setAspectRatio(currentAspectRatio);
                useStore.getState().setMode('series');
                useStore.getState().setView('editor');
              }}

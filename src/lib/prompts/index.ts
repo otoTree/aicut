@@ -16,6 +16,14 @@ const getLangInstruction = (lang: string) => {
   }
 };
 
+const getLangName = (lang: string) => {
+  switch (lang) {
+    case 'en': return 'English';
+    case 'ja': return 'Japanese';
+    case 'zh': default: return 'Chinese';
+  }
+};
+
 export const PROMPT_TEMPLATES: Record<PromptType, PromptTemplate> = {
   generate_skeleton: {
     system: (lang) => `你是一个专业的视频创意导演和编剧。你的任务是根据用户提供的主题，生成一个初步的视频骨架。
@@ -100,10 +108,13 @@ ${getLangInstruction(lang)}
   - 悬疑解说: zh_male_changtianyi_mars_bigtts
   如果角色是旁白，请根据故事氛围选择合适的解说音色（如解说小明、悬疑解说等）。
 
-- dialogueContent: 对白内容。具体的台词或旁白。不需要多余的词语解释，只需要直接输出对白内容。
-- duration: 建议持续时间（秒）。必须是 4 到 12 之间的整数。
+- dialogueContent: 对白内容。具体的台词或旁白。不需要多余的词语解释，只需要直接输出对白内容。注意：必须严格使用${getLangName(lang)}。
+- duration: 建议持续时间（秒）。必须是 5 到 12 之间的整数。
 
-重要：视频总时长必须至少达到 60 秒。请生成足够数量的镜头（例如 12-20 个镜头），并合理分配每个镜头的时长，以确保总时长符合要求。
+重要：
+1. 视频总时长必须至少达到 60 秒。请生成 10-15 个镜头，并合理分配每个镜头的时长。
+2. **注重分镜的连续性**：尽量减少一分钟内不必要的场景跳跃。如果同一场景内有连续动作，请保持场景 ID 不变，并通过 visualDescription 描述连续的动作变化，而不是频繁切换场景。
+3. 尽量使用长镜头（Long Take）或稳定的运镜来表现故事，避免过于细碎的剪辑。
 
 输出必须是 JSON 格式的数组，每个元素代表一个镜头。
 请直接输出 JSON 内容。如果你需要提供额外的解释，请确保 JSON 内容被包裹在 \`\`\`json 和 \`\`\` 之间。`,
@@ -121,7 +132,7 @@ ${getLangInstruction(lang)}
 - artStyle: 艺术风格
 - characters: 角色列表 (id, prototype, description, imageUrl)
 - sceneDesigns: 场景设计列表 (id, prototype, description, imageUrl)
-- scenes: 分镜头列表 (id, visualDescription, characterIds, sceneId, cameraDesign, audioDesign, voiceActor, dialogueContent, duration, imageUrl)
+- scenes: 分镜头列表 (id, visualDescription, characterIds, sceneId, cameraDesign, audioDesign, voiceActor, dialogueContent, duration, imageUrl)。注意：dialogueContent 必须严格使用${getLangName(lang)}。
 
 注意：
 1. 如果用户只是进行普通咨询，不需要输出 JSON。
@@ -175,15 +186,16 @@ ${getLangInstruction(lang)}
 - scenes: 分镜头大纲列表。每个镜头包含：
   - id: 唯一标识 (建议使用 s_1, s_2 等)
   - action: 简短的剧情动作描述 (例如：林婉清走进咖啡厅，神色匆忙)
-  - dialogueContent: 对白内容 (如有)
-  - duration: 建议时长 (秒)。必须是 4 到 12 之间的整数。
+  - dialogueContent: 对白内容 (如有)。注意：必须严格使用${getLangName(lang)}。
+  - duration: 建议时长 (秒)。必须是 5 到 12 之间的整数。
   - characterIds: 参与此镜头的角色 ID 列表 (仅引用 ID)
   - sceneId: 此镜头所处的场景 ID (仅引用 ID)
 
 重要：
-1. 请生成足够数量的镜头 (12-20 个) 以确保故事完整且时长达标。
-2. 仅输出大纲信息，不要包含 visualDescription, cameraDesign, audioDesign 等细节字段。
-3. 不需要输出 characters 和 sceneDesigns 的定义列表。
+1. 请生成 10-15 个镜头，确保故事完整且时长达标。
+2. **注重分镜的连续性**：尽量减少一分钟内不必要的场景跳跃。如果同一场景内有连续动作，请保持场景 ID 不变。
+3. 仅输出大纲信息，不要包含 visualDescription, cameraDesign, audioDesign 等细节字段。
+4. 不需要输出 characters 和 sceneDesigns 的定义列表。
 
 请直接输出 JSON 内容。`,
     user: (input, lang) => `请根据以下信息生成第 ${JSON.parse(input).index} 集的分镜头大纲：\n${input}`,
@@ -193,7 +205,7 @@ ${getLangInstruction(lang)}
 ${getLangInstruction(lang)}
 
 你需要为每个镜头补充以下细节：
-- visualDescription: 详细的画面描述 Prompt (用于 AI 绘画)。结合艺术风格，描述光影、构图、角色动作和表情。
+- visualDescription: 详细的画面描述 Prompt (用于 AI 绘画)。结合艺术风格，描述光影、构图、角色动作和表情。**必须确保与上一镜头的视觉连续性**（例如：如果场景和角色相同，请保持他们的位置和状态连贯）。
 - cameraDesign: 镜头语言设计 (如 Close-up, Pan Right, Eye Level)。
 - audioDesign: 音效设计 (背景音、环境音)。
 - voiceActor: 为有对白的角色选择合适的音色 ID。
@@ -206,7 +218,8 @@ ${getLangInstruction(lang)}
 - 年轻女性: zh_female_tianmeixiaoyuan_moon_bigtts
 (你可以根据角色性格灵活选择其他通用音色)
 
-输入是一个包含 scenes (部分信息) 和 bible (艺术风格等) 的 JSON。
+输入是一个包含 scenes (部分信息)、bible (艺术风格等) 以及可选的 previousScene (上一镜头完整信息) 的 JSON。
+如果提供了 previousScene，请确保生成的第一个镜头在视觉和叙事上与其保持连贯。
 输出必须是 JSON 格式的数组，仅包含更新后的 scenes 列表 (包含所有原有字段加上新生成的字段)。`,
     user: (input, lang) => `请为以下分镜头大纲补充视觉和听觉细节：\n${input}`,
   },
@@ -217,8 +230,9 @@ ${getLangInstruction(lang)}
 重要原则：
 1. **必须**优先使用“剧集圣经”中定义的角色 ID 和场景 ID，以保持系列的一致性。
 2. 如果剧情中出现了圣经中没有的新角色或新场景，请在本地定义它们。
-3. 请合理分配镜头时长，确保本集视频总时长至少达到 60 秒。
-4. 配音角色必须从标准音色库中选择（例如：zh_male_jieshuoxiaoming_moon_bigtts）。
+3. 请合理分配镜头时长，确保本集视频总时长至少达到 60 秒。建议单个镜头时长 5-12 秒，避免剪辑过快。
+4. **注重连续性**：尽量减少一分钟内不必要的场景跳跃。
+5. 配音角色必须从标准音色库中选择（例如：zh_male_jieshuoxiaoming_moon_bigtts）。
 
 输出必须是 JSON 格式，包含以下字段：
 - theme: 本集主题（通常是剧集标题）
@@ -237,8 +251,8 @@ ${getLangInstruction(lang)}
   - cameraDesign: 镜头设计。
   - audioDesign: 音频设计。
   - voiceActor: 配音角色 ID。
-  - dialogueContent: 对白内容。
-  - duration: 建议时长（秒）。必须是 4 到 12 之间的整数。
+  - dialogueContent: 对白内容。注意：必须严格使用${getLangName(lang)}。
+  - duration: 建议时长（秒）。必须是 5 到 12 之间的整数。
   
 请直接输出 JSON 内容。如果你需要提供额外的解释，请确保 JSON 内容被包裹在 \`\`\`json 和 \`\`\` 之间。`,
     user: (input, lang) => `请根据以下信息生成第 ${JSON.parse(input).index} 集的分镜头脚本：\n${input}`,

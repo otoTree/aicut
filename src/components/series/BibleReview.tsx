@@ -6,16 +6,18 @@ import { useStore, Character, SceneDesign, EpisodeSummary } from '@/store/useSto
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Loader2, Plus, Trash2, Sparkles, ImageIcon, ArrowRight } from 'lucide-react';
-import { cn } from '@/lib/utils';
+import { extractJSON, cn } from '@/lib/utils';
 import { llmClient } from '@/lib/llm/client';
 import { PromptFactory } from '@/lib/prompts';
+import { getResolution } from '@/lib/utils/aspect-ratio';
+import { toast } from 'sonner';
 
 interface BibleReviewProps {
   onNext: () => void;
 }
 
 export function BibleReview({ onNext }: BibleReviewProps) {
-  const { seriesBible, setSeriesBible, setEpisodes, novelContent } = useStore();
+  const { seriesBible, setSeriesBible, setEpisodes, novelContent, aspectRatio } = useStore();
   const [generatingIds, setGeneratingIds] = useState<Set<string>>(new Set());
   const [isSegmenting, setIsSegmenting] = useState(false);
   const [isGeneratingAll, setIsGeneratingAll] = useState(false);
@@ -52,7 +54,7 @@ export function BibleReview({ onNext }: BibleReviewProps) {
             size = '1728x2304';
           } else {
             finalPrompt = `艺术风格：${artStyle}。场景描述：${task.description}。画面要求：无角色，空场景，仅背景，高质量，杰作，原创设计。Safe for work, avoid copyright.`;
-            size = '2560x1440';
+            size = getResolution(aspectRatio);
           }
           
           const response = await llmClient.generateImage(finalPrompt, size);
@@ -95,7 +97,7 @@ export function BibleReview({ onNext }: BibleReviewProps) {
         size = '1728x2304';
       } else if (type === 'sceneDesigns') {
         finalPrompt = `艺术风格：${artStyle}。场景描述：${description}。画面要求：无角色，空场景，仅背景，高质量，杰作，原创设计。Safe for work, avoid copyright.`;
-        size = '2560x1440';
+        size = getResolution(aspectRatio);
       }
       
       const response = await llmClient.generateImage(finalPrompt, size);
@@ -127,17 +129,16 @@ export function BibleReview({ onNext }: BibleReviewProps) {
         { role: 'user', content: prompt.user }
       ]);
 
-      let jsonContent = response.content;
-      const match = jsonContent.match(/```json\n([\s\S]*?)\n```/);
-      if (match) {
-        jsonContent = match[1];
+      const episodes = extractJSON<EpisodeSummary[]>(response.content);
+      if (!Array.isArray(episodes)) {
+        throw new Error('返回的数据格式不正确');
       }
 
-      const episodes = JSON.parse(jsonContent) as EpisodeSummary[];
       setEpisodes(episodes.map(e => ({ ...e, status: 'pending' })));
       onNext();
-    } catch (error) {
+    } catch (error: any) {
       console.error('Failed to segment episodes:', error);
+      toast.error('剧集规划失败: ' + (error.message || '未知错误'));
     } finally {
       setIsSegmenting(false);
     }

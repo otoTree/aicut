@@ -9,6 +9,7 @@ import { llmClient } from '@/lib/llm/client';
 import { toast } from 'sonner';
 import { PromptFactory } from '@/lib/prompts';
 import { extractJSON } from '@/lib/utils';
+import { getResolution } from '@/lib/utils/aspect-ratio';
 
 export function EpisodeList() {
   const { 
@@ -19,7 +20,8 @@ export function EpisodeList() {
     setCurrentEpisodeId, 
     setSkeleton,
     episodeSkeletons,
-    updateEpisodeSkeleton
+    updateEpisodeSkeleton,
+    aspectRatio
   } = useStore();
   
   const [generatingId, setGeneratingId] = useState<string | null>(null);
@@ -116,6 +118,7 @@ export function EpisodeList() {
         theme: scriptData.theme,
         storyOverview: scriptData.storyOverview,
         artStyle: seriesBible.artStyle,
+        aspectRatio: aspectRatio,
         characters: seriesBible.characters,
         sceneDesigns: seriesBible.sceneDesigns,
         scenes: initialScenes,
@@ -140,7 +143,8 @@ export function EpisodeList() {
         const batch = scenes.slice(i, i + BATCH_SIZE);
         const batchInput = JSON.stringify({
           bible: { artStyle: seriesBible.artStyle },
-          scenes: batch
+          scenes: batch,
+          previousScene: i > 0 ? scenes[i - 1] : undefined
         });
         
         try {
@@ -201,7 +205,7 @@ export function EpisodeList() {
           prompt += ` 高质量，电影感，8k分辨率。`;
 
           // Generate Image
-          const response = await llmClient.generateImage(prompt, '1920x1080', referenceImages);
+          const response = await llmClient.generateImage(prompt, getResolution(aspectRatio), referenceImages);
 
           // Update local array
           scenesWithImages[index] = { ...scenesWithImages[index], imageUrl: response.url };

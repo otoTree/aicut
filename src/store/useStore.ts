@@ -47,6 +47,8 @@ export interface EpisodeSummary {
   skeletonId?: string; // Link to the full VideoSkeleton
 }
 
+export type AspectRatio = '16:9' | '9:16' | '1:1' | '4:3' | '3:4';
+
 export type ClipType = 'video' | 'audio' | 'text';
 
 export interface Clip {
@@ -71,6 +73,7 @@ export interface VideoSkeleton {
   theme: string;
   storyOverview: string;
   artStyle: string;
+  aspectRatio?: AspectRatio;
   characters: Character[];
   sceneDesigns: SceneDesign[];
   scenes: Scene[];
@@ -89,6 +92,7 @@ export interface AppState {
   view: 'home' | 'editor';
   mode: 'single' | 'series';
   outputLanguage: 'zh' | 'en' | 'ja'; // New global language setting
+  aspectRatio: AspectRatio;
   prompt: string;
   skeleton: VideoSkeleton | null;
   
@@ -111,6 +115,7 @@ export interface AppState {
   setView: (view: 'home' | 'editor') => void;
   setMode: (mode: 'single' | 'series') => void;
   setOutputLanguage: (lang: 'zh' | 'en' | 'ja') => void; // Setter
+  setAspectRatio: (ratio: AspectRatio) => void;
   setPrompt: (prompt: string) => void;
   setSkeleton: (skeleton: VideoSkeleton | null | ((prev: VideoSkeleton | null) => VideoSkeleton | null)) => void;
   
@@ -138,6 +143,7 @@ export const useStore = create<AppState>()(
       view: 'home',
       mode: 'single',
       outputLanguage: 'zh', // Default to Chinese
+      aspectRatio: '16:9',
       prompt: '',
       skeleton: null,
       
@@ -160,6 +166,7 @@ export const useStore = create<AppState>()(
       setView: (view) => set({ view }),
       setMode: (mode) => set({ mode }),
       setOutputLanguage: (lang) => set({ outputLanguage: lang }),
+      setAspectRatio: (aspectRatio) => set({ aspectRatio }),
       setPrompt: (prompt) => set({ prompt }),
       setSkeleton: (skeleton) => set((state) => ({ 
         skeleton: typeof skeleton === 'function' ? skeleton(state.skeleton) : skeleton 
@@ -188,6 +195,7 @@ export const useStore = create<AppState>()(
         skeleton: null,
         mode: 'single',
         outputLanguage: 'zh',
+        aspectRatio: '16:9',
         novelContent: '',
         seriesBible: null,
         episodes: [],
@@ -213,6 +221,7 @@ export const useStore = create<AppState>()(
         prompt: state.prompt,
         mode: state.mode,
         outputLanguage: state.outputLanguage, // Persist language setting
+        aspectRatio: state.aspectRatio,
         novelContent: state.novelContent,
         seriesBible: state.seriesBible,
         episodes: state.episodes,

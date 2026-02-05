@@ -1,6 +1,8 @@
 import { useState, useRef } from 'react';
 import { VideoSkeleton } from '@/store/useStore';
-import { createFFmpeg, fetchFile, FFmpeg } from '@ffmpeg/ffmpeg';
+import { FFmpeg } from '@ffmpeg/ffmpeg';
+import { fetchFile, toBlobURL } from '@ffmpeg/util';
+import { getResolution } from '@/lib/utils/aspect-ratio';
 
 export function useVideoExporter() {
   const [isExporting, setIsExporting] = useState(false);
@@ -10,11 +12,12 @@ export function useVideoExporter() {
   const loadFFmpeg = async () => {
     if (ffmpegRef.current) return ffmpegRef.current;
 
-    const ffmpeg = createFFmpeg({ 
-      log: true,
-      corePath: 'https://unpkg.com/@ffmpeg/core@0.11.0/dist/ffmpeg-core.js'
+    const ffmpeg = new FFmpeg();
+    const baseURL = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd';
+    await ffmpeg.load({
+      coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript'),
+      wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm'),
     });
-    await ffmpeg.load();
     
     ffmpegRef.current = ffmpeg;
     return ffmpeg;
@@ -28,8 +31,14 @@ export function useVideoExporter() {
     try {
       // Setup Canvas
       const canvas = document.createElement('canvas');
-      canvas.width = 1280; // Default to 720p
-      canvas.height = 720;
+      const resolution = getResolution(skeleton.aspectRatio);
+      const [width, height] = resolution.split('x').map(Number);
+      // Scale down to 720p equivalent to ensure performance while maintaining aspect ratio
+      // Base scale on the smaller dimension to be 720
+      const scale = 720 / Math.min(width, height);
+      canvas.width = Math.round(width * scale);
+      canvas.height = Math.round(height * scale);
+      
       const ctx = canvas.getContext('2d');
       if (!ctx) throw new Error('Failed to get canvas context');
 
@@ -208,16 +217,16 @@ export function useVideoExporter() {
       try {
         // Load FFmpeg
         const ffmpeg = await loadFFmpeg();
-        ffmpeg.FS('writeFile', 'input.webm', await fetchFile(webmBlob));
+        await ffmpeg.writeFile('input.webm', await fetchFile(webmBlob));
 
         // Transcode to MP4 with AAC audio
         setProgress(90);
-        await ffmpeg.run('-i', 'input.webm', '-c:v', 'libx264', '-preset', 'ultrafast', '-c:a', 'aac', 'output.mp4');
+        await ffmpeg.exec(['-i', 'input.webm', '-c:v', 'libx264', '-preset', 'ultrafast', '-c:a', 'aac', 'output.mp4']);
         
         // Read output
-        const data = ffmpeg.FS('readFile', 'output.mp4');
-        const buffer = data.buffer as ArrayBuffer;
-        const mp4Blob = new Blob([new Uint8Array(buffer)], { type: 'video/mp4' });
+        const data = await ffmpeg.readFile('output.mp4');
+        const buffer = data as any; // ffmpeg.readFile returns Uint8Array | string, we need buffer
+        const mp4Blob = new Blob([buffer], { type: 'video/mp4' });
 
         // Download
         const url = URL.createObjectURL(mp4Blob);

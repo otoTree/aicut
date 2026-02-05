@@ -15,7 +15,7 @@ export async function POST(req: Request) {
     }
 
     const body = await req.json();
-    const { prompt, imageUrl, model = ARK_VIDEO_MODEL, ...params } = body;
+    const { prompt, imageUrl, lastImageUrl, model = ARK_VIDEO_MODEL, ...params } = body;
 
     // Sanitize duration for Seedance 1.5 Pro
     // Constraint: integer in [4, 12] or -1
@@ -42,6 +42,17 @@ export async function POST(req: Request) {
       },
       role: 'first_frame',
     });
+
+    // 添加图片信息 (尾帧) - 如果提供了 lastImageUrl
+    if (lastImageUrl) {
+      content.push({
+        type: 'image_url',
+        image_url: {
+          url: lastImageUrl,
+        },
+        role: 'last_frame',
+      });
+    }
 
     // 添加文本信息 (提示词)
     if (prompt) {

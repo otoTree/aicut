@@ -9,6 +9,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Loader2, Plus, GripVertical, Trash2, Image as ImageIcon, User, Map, Film, BookOpen, Palette, Sparkles, Volume2, Mic } from 'lucide-react';
 import { VOICES, getVoiceName, getVoiceId } from '@/lib/tts/voices';
 import { cn } from '@/lib/utils';
+import { getResolution } from '@/lib/utils/aspect-ratio';
 import { llmClient } from '@/lib/llm/client';
 import { db } from '@/lib/db-client';
 
@@ -21,7 +22,7 @@ const STEPS = [
 ];
 
 export function SkeletonEditor() {
-  const { skeleton, isGenerating, setSkeleton, currentStep, setCurrentStep } = useStore();
+  const { skeleton, isGenerating, setSkeleton, currentStep, setCurrentStep, aspectRatio } = useStore();
   const [generatingIds, setGeneratingIds] = useState<Set<string>>(new Set());
   const [generatingVideoIds, setGeneratingVideoIds] = useState<Set<string>>(new Set());
   const [generatingAudioIds, setGeneratingAudioIds] = useState<Set<string>>(new Set());
@@ -95,6 +96,12 @@ export function SkeletonEditor() {
     restoreAudio();
   }, [skeleton, setSkeleton]); // Run when skeleton loads or changes
 
+  useEffect(() => {
+    if (skeleton && !skeleton.aspectRatio && aspectRatio) {
+      setSkeleton(prev => prev ? { ...prev, aspectRatio } : prev);
+    }
+  }, [skeleton, aspectRatio, setSkeleton]);
+
   if (isGenerating && !skeleton) {
     return (
       <div className="flex-1 flex flex-col items-center justify-center space-y-4">
@@ -116,12 +123,14 @@ export function SkeletonEditor() {
       let size = '2K';
       let referenceImages: string[] = [];
 
+      const effectiveAspectRatio = skeleton.aspectRatio ?? aspectRatio;
+
       if (type === 'characters') {
         finalPrompt = `艺术风格：${artStyle}。角色描述：${description}。画面要求：全身站立，无动作，纯白背景，无背景，仅角色，高质量，杰作，原创设计。Safe for work, avoid copyright.`;
         size = '1728x2304';
       } else if (type === 'sceneDesigns') {
         finalPrompt = `艺术风格：${artStyle}。场景描述：${description}。画面要求：无角色，空场景，仅背景，高质量，杰作，原创设计。Safe for work, avoid copyright.`;
-        size = '2560x1440';
+        size = getResolution(effectiveAspectRatio);
       } else if (type === 'scenes') {
         const scene = skeleton.scenes.find(s => s.id === id);
         if (scene) {
@@ -154,7 +163,7 @@ ${imageRefPrompts}
 镜头设计：${scene.cameraDesign}。
 要求：请参考上述角色原型图和场景底图，将它们完美融合到当前镜头中。保持角色特征和场景氛围的一致性。
 注意：高质量、杰作、专业影视构图、原创设计、规避任何版权角色或标志、严禁色情、暴力或任何违规内容 (Safe for work, No NSFW, No copyright infringement)。`;
-          size = '2560x1440';
+          size = getResolution(effectiveAspectRatio);
         }
       }
       
@@ -195,7 +204,20 @@ ${imageRefPrompts}
         finalPrompt = `${scene.visualDescription} Character says: "${scene.dialogueContent}"`;
       }
 
-      const { id: taskId } = await llmClient.generateVideo(finalPrompt, scene.imageUrl, scene.duration);
+      // Determine lastImageUrl
+      let lastImageUrl = undefined;
+      if (skeleton && skeleton.scenes) {
+        const index = skeleton.scenes.findIndex(s => s.id === sceneId);
+        if (index > -1 && index < skeleton.scenes.length - 1) {
+          const nextScene = skeleton.scenes[index + 1];
+          if (nextScene && nextScene.imageUrl) {
+            lastImageUrl = nextScene.imageUrl;
+          }
+        }
+      }
+
+      const effectiveAspectRatio = skeleton?.aspectRatio ?? aspectRatio;
+      const { id: taskId } = await llmClient.generateVideo(finalPrompt, scene.imageUrl, scene.duration, effectiveAspectRatio, lastImageUrl);
       
       let attempts = 0;
       const maxAttempts = 60;

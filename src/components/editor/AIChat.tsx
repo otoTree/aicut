@@ -12,11 +12,12 @@ import { Sparkles, Send, Loader2, Image as ImageIcon } from 'lucide-react';
 import { PromptFactory } from '@/lib/prompts';
 import { llmClient } from '@/lib/llm/client';
 import { extractJSON } from '@/lib/utils';
+import { getResolution } from '@/lib/utils/aspect-ratio';
 
 import { db } from '@/lib/db-client';
 
 export function AIChat() {
-  const { messages, addMessage, skeleton, setSkeleton, setGeneratingSceneId } = useStore();
+  const { messages, addMessage, skeleton, setSkeleton, setGeneratingSceneId, aspectRatio } = useStore();
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
 
@@ -101,7 +102,17 @@ export function AIChat() {
           finalPrompt = `${scene.visualDescription} Character says: "${scene.dialogueContent}"`;
         }
 
-        const { id: taskId } = await llmClient.generateVideo(finalPrompt, scene.imageUrl);
+        // Determine lastImageUrl for continuity
+        let lastImageUrl = undefined;
+        if (i < scenes.length - 1) {
+          const nextScene = scenes[i + 1];
+          if (nextScene && nextScene.imageUrl) {
+            lastImageUrl = nextScene.imageUrl;
+          }
+        }
+
+        const effectiveAspectRatio = skeleton.aspectRatio ?? aspectRatio;
+        const { id: taskId } = await llmClient.generateVideo(finalPrompt, scene.imageUrl, undefined, effectiveAspectRatio, lastImageUrl);
         
         // 轮询状态
         let attempts = 0;
@@ -199,7 +210,7 @@ export function AIChat() {
     try {
       if (currentInput.startsWith('/image ')) {
         const prompt = currentInput.slice(7).trim();
-        const response = await llmClient.generateImage(prompt);
+        const response = await llmClient.generateImage(prompt, getResolution(aspectRatio));
         addMessage({ 
           role: 'assistant', 
           content: `已为您生成图片：${prompt}`,

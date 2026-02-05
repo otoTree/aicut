@@ -38,7 +38,7 @@ export function extractJSON<T>(text: string): T {
     }
   }
 
-  // 3. 寻找第一个 { 和最后一个 }
+  // 3. 寻找第一个 { 和最后一个 } (针对对象)
   const firstBrace = text.indexOf('{');
   const lastBrace = text.lastIndexOf('}');
   if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
@@ -50,7 +50,19 @@ export function extractJSON<T>(text: string): T {
     }
   }
 
-  // 4. 最后尝试直接解析整个文本
+  // 4. 寻找第一个 [ 和最后一个 ] (针对数组)
+  const firstBracket = text.indexOf('[');
+  const lastBracket = text.lastIndexOf(']');
+  if (firstBracket !== -1 && lastBracket !== -1 && lastBracket > firstBracket) {
+    const jsonCandidate = text.substring(firstBracket, lastBracket + 1);
+    try {
+      return JSON.parse(jsonCandidate);
+    } catch (e) {
+      // 如果解析失败，继续尝试其他方法
+    }
+  }
+
+  // 5. 最后尝试直接解析整个文本
   return JSON.parse(text);
 }
 

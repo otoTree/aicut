@@ -108,9 +108,12 @@ export function VideoPreview() {
     setDuration,
     addMessage,
     generatingSceneId,
-    setGeneratingSceneId
+    setGeneratingSceneId,
+    aspectRatio
   } = useStore();
   const [isMuted, setIsMuted] = useState(false);
+  
+  const effectiveAspectRatio = skeleton?.aspectRatio ?? aspectRatio;
 
   const [isRegeneratingAll, setIsRegeneratingAll] = useState(false);
 
@@ -139,7 +142,18 @@ export function VideoPreview() {
           finalPrompt = `${scene.visualDescription} Character says: "${scene.dialogueContent}"`;
         }
 
-        const { id: taskId } = await llmClient.generateVideo(finalPrompt, scene.imageUrl);
+        // Determine lastImageUrl for continuity (use next scene's first frame as current scene's last frame)
+        // Except for the last scene, which should not have a tail frame
+        let lastImageUrl = undefined;
+        if (i < scenes.length - 1) {
+          const nextScene = scenes[i + 1];
+          if (nextScene && nextScene.imageUrl) {
+            lastImageUrl = nextScene.imageUrl;
+          }
+        }
+
+        const effectiveAspectRatio = skeleton.aspectRatio ?? aspectRatio;
+        const { id: taskId } = await llmClient.generateVideo(finalPrompt, scene.imageUrl, undefined, effectiveAspectRatio, lastImageUrl);
         
         let attempts = 0;
         const maxAttempts = 60;
@@ -467,7 +481,15 @@ export function VideoPreview() {
           </button>
         </div>
 
-        <div className="w-full max-w-4xl aspect-video bg-black rounded-2xl overflow-hidden shadow-2xl relative group">
+        <div 
+          className={cn(
+            "bg-black rounded-2xl overflow-hidden shadow-2xl relative group mx-auto",
+            (effectiveAspectRatio === '9:16' || effectiveAspectRatio === '3:4' || effectiveAspectRatio === '1:1') 
+              ? "h-[70vh] w-auto" 
+              : "w-full max-w-4xl"
+          )}
+          style={{ aspectRatio: effectiveAspectRatio.replace(':', '/') }}
+        >
           {/* Mock Video Placeholder / Video Player */}
           <div className="absolute inset-0 flex flex-col items-center justify-center">
             {allVideoUrls.map((url) => (
