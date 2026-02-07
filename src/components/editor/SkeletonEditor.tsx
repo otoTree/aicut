@@ -113,8 +113,24 @@ export function SkeletonEditor() {
 
   if (!skeleton) return null;
 
-  const handleGenerateImage = async (id: string, description: string, type: 'characters' | 'sceneDesigns' | 'scenes') => {
+  const handleGenerateImage = async (
+    id: string,
+    description: string,
+    type: 'characters' | 'sceneDesigns' | 'scenes',
+    targetField: 'imageUrl' | 'endImageUrl' = 'imageUrl',
+    onlyIfEmpty = false
+  ) => {
     if (generatingIds.has(id)) return;
+    if (!skeleton) return;
+    if (onlyIfEmpty) {
+      if (type === 'scenes') {
+        const scene = skeleton.scenes.find(s => s.id === id) as any;
+        if (scene && scene[targetField]) return;
+      } else {
+        const item = (skeleton as any)[type]?.find((i: any) => i.id === id);
+        if (item && item.imageUrl) return;
+      }
+    }
     
     setGeneratingIds(prev => new Set(prev).add(id));
     try {
@@ -174,7 +190,18 @@ ${imageRefPrompts}
         const items = [...prev[type]] as any[];
         const index = items.findIndex(item => item.id === id);
         if (index > -1) {
-          items[index] = { ...items[index], imageUrl: response.url };
+          // If type is scenes, we might be updating endImageUrl
+          if (type === 'scenes') {
+             if (onlyIfEmpty && items[index][targetField]) {
+               return prev;
+             }
+             items[index] = { ...items[index], [targetField]: response.url };
+          } else {
+             if (onlyIfEmpty && items[index].imageUrl) {
+               return prev;
+             }
+             items[index] = { ...items[index], imageUrl: response.url };
+          }
         }
         return { ...prev, [type]: items };
       });
@@ -193,7 +220,17 @@ ${imageRefPrompts}
     if (generatingVideoIds.has(sceneId)) return;
     
     const scene = skeleton?.scenes.find(s => s.id === sceneId);
-    if (!scene || !scene.imageUrl) return;
+    if (!scene) return;
+
+    // Determine start image
+    const useStart = scene.useStartFrame !== false;
+    const startImage = useStart ? scene.imageUrl : undefined;
+    
+    if (useStart && !startImage) {
+        // toast.error('需要起始帧图片才能生成视频');
+        console.error('需要起始帧图片才能生成视频');
+        return;
+    }
 
     setGeneratingVideoIds(prev => new Set(prev).add(sceneId));
     try {
@@ -206,18 +243,19 @@ ${imageRefPrompts}
 
       // Determine lastImageUrl
       let lastImageUrl = undefined;
-      if (skeleton && skeleton.scenes) {
-        const index = skeleton.scenes.findIndex(s => s.id === sceneId);
-        if (index > -1 && index < skeleton.scenes.length - 1) {
-          const nextScene = skeleton.scenes[index + 1];
-          if (nextScene && nextScene.imageUrl) {
-            lastImageUrl = nextScene.imageUrl;
-          }
-        }
+      
+      if (scene.useEndFrame && scene.endImageUrl) {
+        lastImageUrl = scene.endImageUrl;
       }
 
       const effectiveAspectRatio = skeleton?.aspectRatio ?? aspectRatio;
-      const { id: taskId } = await llmClient.generateVideo(finalPrompt, scene.imageUrl, scene.duration, effectiveAspectRatio, lastImageUrl);
+
+      const { id: taskId } = await llmClient.generateVideo(
+          finalPrompt, 
+          startImage!, 
+          effectiveAspectRatio, 
+          lastImageUrl
+      );
       
       let attempts = 0;
       const maxAttempts = 60;
@@ -297,7 +335,8 @@ ${imageRefPrompts}
     const textClips: Clip[] = [];
 
     scenes.forEach(scene => {
-      const duration = scene.duration || 3;
+      // Use duration if set (and > 0), otherwise default to 5s for preview timeline
+      const duration = (scene.duration && scene.duration > 0) ? scene.duration : 5;
       
       // Video
       videoClips.push({
@@ -370,7 +409,7 @@ ${imageRefPrompts}
         audioDesign: '', 
         voiceActor: '', 
         dialogueContent: '', 
-        duration: 3 
+        duration: -1 // Default to smart duration
       }];
       return { ...prev, scenes: newScenes };
     });
@@ -540,7 +579,7 @@ ${imageRefPrompts}
 
     // Process sequentially
     for (const scene of scenesToGenerate) {
-      await handleGenerateImage(scene.id, scene.visualDescription, 'scenes');
+      await handleGenerateImage(scene.id, scene.visualDescription, 'scenes', 'imageUrl', true);
       // Small delay between requests
       await new Promise(resolve => setTimeout(resolve, 500));
     }
@@ -772,55 +811,131 @@ ${imageRefPrompts}
                     
                     <div className="flex-1 space-y-4">
                       <div className="flex items-start gap-6">
-                        {/* Scene Image Preview */}
-                        <div className="w-48 h-28 shrink-0 bg-black/5 rounded-xl flex flex-col items-center justify-center overflow-hidden relative group/img">
-                          {scene.videoUrl ? (
-                            <video src={scene.videoUrl} className="w-full h-full object-cover" autoPlay muted loop />
-                          ) : scene.imageUrl ? (
-                            <Image src={scene.imageUrl} alt={`Scene ${index + 1}`} fill className="object-cover" />
-                          ) : generatingIds.has(scene.id) || generatingVideoIds.has(scene.id) ? (
-                            <Loader2 className="w-6 h-6 text-black/20 animate-spin" />
-                          ) : (
-                            <ImageIcon className="w-6 h-6 text-black/10" />
+                        {/* Scene Frames Control */}
+                        <div className="flex flex-col gap-4 shrink-0 w-48">
+                          
+                          {/* Start Frame */}
+                          <div className="space-y-2">
+                             <div className="flex items-center justify-between px-1">
+                                <label className="text-[10px] font-medium text-black/40">起始帧</label>
+                                <input 
+                                   type="checkbox"
+                                   checked={scene.useStartFrame !== false}
+                                   onChange={(e) => updateScene(scene.id, { useStartFrame: e.target.checked })}
+                                   className="w-3 h-3 accent-black"
+                                />
+                             </div>
+                             
+                             {(scene.useStartFrame !== false) ? (
+                                <div className="w-48 h-28 bg-black/5 rounded-xl flex flex-col items-center justify-center overflow-hidden relative group/img">
+                                  {scene.videoUrl ? (
+                                    <video src={scene.videoUrl} className="w-full h-full object-cover" autoPlay muted loop />
+                                  ) : scene.imageUrl ? (
+                                    <Image src={scene.imageUrl} alt={`Scene ${index + 1} Start`} fill className="object-cover" />
+                                  ) : generatingIds.has(scene.id) || generatingVideoIds.has(scene.id) ? (
+                                    <Loader2 className="w-6 h-6 text-black/20 animate-spin" />
+                                  ) : (
+                                    <ImageIcon className="w-6 h-6 text-black/10" />
+                                  )}
+
+                                  {/* Action Overlay */}
+                                  <div className={cn(
+                                    "absolute inset-0 bg-black/40 flex flex-col items-center justify-center gap-2 opacity-0 group-hover/img:opacity-100 transition-opacity",
+                                    (!scene.imageUrl && !generatingIds.has(scene.id)) && "opacity-100 bg-transparent hover:bg-black/5"
+                                  )}>
+                                    {!generatingIds.has(scene.id) && !generatingVideoIds.has(scene.id) && (
+                                      <>
+                                        <button
+                                          onClick={() => handleGenerateImage(scene.id, scene.visualDescription, 'scenes', 'imageUrl')}
+                                          className="bg-white/90 px-3 py-1.5 rounded-full shadow-lg flex items-center gap-2 transform scale-90 hover:scale-100 transition-all group/btn"
+                                        >
+                                          <Sparkles className="w-3 h-3 text-black" />
+                                          <span className="text-[10px] font-medium text-black">
+                                            {scene.imageUrl ? '重绘起始帧' : '生成起始帧'}
+                                          </span>
+                                        </button>
+                                      </>
+                                    )}
+                                    {(generatingIds.has(scene.id) || generatingVideoIds.has(scene.id)) && (
+                                      <div className="bg-white/90 px-3 py-1.5 rounded-full shadow-lg flex items-center gap-2">
+                                        <Loader2 className="w-3 h-3 animate-spin text-black" />
+                                        <span className="text-[10px] font-medium text-black">生成中...</span>
+                                      </div>
+                                    )}
+                                  </div>
+                                </div>
+                             ) : (
+                                <div className="w-48 h-28 border border-dashed border-black/10 rounded-xl flex items-center justify-center bg-black/[0.01]">
+                                   <span className="text-[10px] text-black/20">不使用起始帧</span>
+                                </div>
+                             )}
+                          </div>
+
+                          {/* End Frame */}
+                          <div className="space-y-2">
+                             <div className="flex items-center justify-between px-1">
+                                <label className="text-[10px] font-medium text-black/40">结束帧</label>
+                                <input 
+                                   type="checkbox"
+                                   checked={scene.useEndFrame || false}
+                                   onChange={(e) => updateScene(scene.id, { useEndFrame: e.target.checked })}
+                                   className="w-3 h-3 accent-black"
+                                />
+                             </div>
+                             
+                             {(scene.useEndFrame) ? (
+                                <div className="w-48 h-28 bg-black/5 rounded-xl flex flex-col items-center justify-center overflow-hidden relative group/img">
+                                  {scene.endImageUrl ? (
+                                    <Image src={scene.endImageUrl} alt={`Scene ${index + 1} End`} fill className="object-cover" />
+                                  ) : generatingIds.has(scene.id) ? (
+                                    <Loader2 className="w-6 h-6 text-black/20 animate-spin" />
+                                  ) : (
+                                    <ImageIcon className="w-6 h-6 text-black/10" />
+                                  )}
+
+                                  {/* Action Overlay */}
+                                  <div className={cn(
+                                    "absolute inset-0 bg-black/40 flex flex-col items-center justify-center gap-2 opacity-0 group-hover/img:opacity-100 transition-opacity",
+                                    (!scene.endImageUrl && !generatingIds.has(scene.id)) && "opacity-100 bg-transparent hover:bg-black/5"
+                                  )}>
+                                    {!generatingIds.has(scene.id) && (
+                                      <button
+                                        onClick={() => handleGenerateImage(scene.id, scene.visualDescription, 'scenes', 'endImageUrl')}
+                                        className="bg-white/90 px-3 py-1.5 rounded-full shadow-lg flex items-center gap-2 transform scale-90 hover:scale-100 transition-all group/btn"
+                                      >
+                                        <Sparkles className="w-3 h-3 text-black" />
+                                        <span className="text-[10px] font-medium text-black">
+                                          {scene.endImageUrl ? '重绘结束帧' : '生成结束帧'}
+                                        </span>
+                                      </button>
+                                    )}
+                                  </div>
+                                </div>
+                             ) : (
+                                <div className="w-48 h-10 border border-dashed border-black/10 rounded-xl flex items-center justify-center bg-black/[0.01]">
+                                   <span className="text-[10px] text-black/20">不使用结束帧</span>
+                                </div>
+                             )}
+                          </div>
+
+                          {/* Video Generation Button */}
+                          {(scene.imageUrl || scene.endImageUrl) && (
+                              <button
+                                onClick={() => handleGenerateVideo(scene.id)}
+                                disabled={generatingVideoIds.has(scene.id)}
+                                className="w-full bg-black text-white px-3 py-2 rounded-lg shadow-lg flex items-center justify-center gap-2 hover:bg-black/80 transition-all disabled:opacity-50"
+                              >
+                                {generatingVideoIds.has(scene.id) ? (
+                                   <Loader2 className="w-3 h-3 animate-spin text-white" />
+                                ) : (
+                                   <Film className="w-3 h-3 text-white" />
+                                )}
+                                <span className="text-[10px] font-medium text-white">
+                                  {scene.videoUrl ? '重新生成视频' : '生成视频'}
+                                </span>
+                              </button>
                           )}
 
-                          {/* Action Overlay */}
-                          <div className={cn(
-                            "absolute inset-0 bg-black/40 flex flex-col items-center justify-center gap-2 opacity-0 group-hover/img:opacity-100 transition-opacity",
-                            (!scene.imageUrl && !generatingIds.has(scene.id)) && "opacity-100 bg-transparent hover:bg-black/5"
-                          )}>
-                            {!generatingIds.has(scene.id) && !generatingVideoIds.has(scene.id) && (
-                              <>
-                                <button
-                                  onClick={() => handleGenerateImage(scene.id, scene.visualDescription, 'scenes')}
-                                  className="bg-white/90 px-3 py-1.5 rounded-full shadow-lg flex items-center gap-2 transform scale-90 hover:scale-100 transition-all group/btn"
-                                >
-                                  <Sparkles className="w-3 h-3 text-black" />
-                                  <span className="text-[10px] font-medium text-black">
-                                    {scene.imageUrl ? '重新生成图片' : '生成图片'}
-                                  </span>
-                                </button>
-                                
-                                {scene.imageUrl && (
-                                  <button
-                                    onClick={() => handleGenerateVideo(scene.id)}
-                                    className="bg-white/90 px-3 py-1.5 rounded-full shadow-lg flex items-center gap-2 transform scale-90 hover:scale-100 transition-all"
-                                  >
-                                    <Film className="w-3 h-3 text-black" />
-                                    <span className="text-[10px] font-medium text-black">
-                                      {scene.videoUrl ? '重新生成视频' : '生成视频'}
-                                    </span>
-                                  </button>
-                                )}
-                              </>
-                            )}
-                            {(generatingIds.has(scene.id) || generatingVideoIds.has(scene.id)) && (
-                              <div className="bg-white/90 px-3 py-1.5 rounded-full shadow-lg flex items-center gap-2">
-                                <Loader2 className="w-3 h-3 animate-spin text-black" />
-                                <span className="text-[10px] font-medium text-black">生成中...</span>
-                              </div>
-                            )}
-                          </div>
                         </div>
 
                         <div className="flex-1 space-y-4">
@@ -875,12 +990,18 @@ ${imageRefPrompts}
                                 </div>
                                 <div className="space-y-2">
                                   <label className="text-[10px] uppercase tracking-[0.2em] text-black/40 font-medium">时长 (秒)</label>
-                                  <input
-                                    type="number"
-                                    value={scene.duration}
-                                    onChange={(e) => updateScene(scene.id, { duration: Number(e.target.value) })}
-                                    className="w-full bg-black/[0.02] border-none rounded-lg px-4 py-2 text-xs focus:outline-none"
-                                  />
+                                  <div className="relative">
+                                    <input
+                                      type="number"
+                                      value={scene.duration}
+                                      onChange={(e) => updateScene(scene.id, { duration: Number(e.target.value) })}
+                                      className="w-full bg-black/[0.02] border-none rounded-lg px-4 py-2 text-xs focus:outline-none"
+                                    />
+                                    <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] text-black/30 pointer-events-none">
+                                      {scene.duration === -1 ? '智能' : 's'}
+                                    </span>
+                                  </div>
+                                  <p className="text-[9px] text-black/30 text-right px-1">-1 为智能时长</p>
                                 </div>
                               </div>
 

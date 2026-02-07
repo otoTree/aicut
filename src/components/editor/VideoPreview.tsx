@@ -136,24 +136,36 @@ export function VideoPreview() {
       setGeneratingSceneId(scene.id);
       
       try {
+        // Determine start image
+        const useStart = scene.useStartFrame !== false;
+        const startImage = useStart ? scene.imageUrl : undefined;
+        
+        if (useStart && !startImage) {
+           console.warn(`Scene ${i} missing start image, skipping.`);
+           continue;
+        }
+        
         // Construct prompt with dialogue for lip-sync
         let finalPrompt = scene.visualDescription;
         if (scene.dialogueContent) {
           finalPrompt = `${scene.visualDescription} Character says: "${scene.dialogueContent}"`;
         }
 
-        // Determine lastImageUrl for continuity (use next scene's first frame as current scene's last frame)
-        // Except for the last scene, which should not have a tail frame
+        // Determine lastImageUrl
         let lastImageUrl = undefined;
-        if (i < scenes.length - 1) {
-          const nextScene = scenes[i + 1];
-          if (nextScene && nextScene.imageUrl) {
-            lastImageUrl = nextScene.imageUrl;
-          }
+        
+        if (scene.useEndFrame && scene.endImageUrl) {
+          lastImageUrl = scene.endImageUrl;
         }
 
         const effectiveAspectRatio = skeleton.aspectRatio ?? aspectRatio;
-        const { id: taskId } = await llmClient.generateVideo(finalPrompt, scene.imageUrl, undefined, effectiveAspectRatio, lastImageUrl);
+
+        const { id: taskId } = await llmClient.generateVideo(
+            finalPrompt, 
+            startImage!, 
+            effectiveAspectRatio, 
+            lastImageUrl
+        );
         
         let attempts = 0;
         const maxAttempts = 60;

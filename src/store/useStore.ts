@@ -14,6 +14,11 @@ export interface Scene {
   imageUrl?: string;
   videoUrl?: string;
   audioUrl?: string;
+  
+  // Fine-grained control
+  endImageUrl?: string; // Optional end frame
+  useStartFrame?: boolean; // Whether to use start frame (imageUrl) for video generation. Default: true
+  useEndFrame?: boolean;   // Whether to use end frame (endImageUrl) for video generation. Default: false
 }
 
 export interface Character {

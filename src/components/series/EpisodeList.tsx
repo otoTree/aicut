@@ -99,7 +99,8 @@ export function EpisodeList() {
          id: 'main-track',
          name: 'Track 1',
          clips: initialScenes.map((s: any) => {
-            const dur = s.duration || 3;
+            // Default to 5s for preview if duration is smart (-1)
+            const dur = (s.duration && s.duration > 0) ? s.duration : 5;
             const clip = {
                id: `v-${s.id}`,
                type: 'video' as const,
@@ -180,7 +181,9 @@ export function EpisodeList() {
 
       const scenesWithImages = [...scenes];
       const imageConcurrency = 3;
-      const scenesQueue = scenesWithImages.map((s, i) => ({ scene: s, index: i }));
+      const scenesQueue = scenesWithImages
+        .map((s, i) => ({ scene: s, index: i }))
+        .filter(({ scene }) => !scene.imageUrl);
 
       const processImageGeneration = async () => {
         if (scenesQueue.length === 0) return;
@@ -188,6 +191,12 @@ export function EpisodeList() {
         const item = scenesQueue.shift();
         if (!item) return;
         const { scene, index } = item;
+        if (scene.imageUrl) {
+          if (scenesQueue.length > 0) {
+            await processImageGeneration();
+          }
+          return;
+        }
 
         try {
           // Construct prompt

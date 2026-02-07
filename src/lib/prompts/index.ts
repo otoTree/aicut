@@ -24,6 +24,14 @@ const getLangName = (lang: string) => {
   }
 };
 
+const getDialogueLangHint = (lang: string) => {
+  switch (lang) {
+    case 'en': return 'in English';
+    case 'ja': return 'in Japanese';
+    case 'zh': default: return 'in Chinese';
+  }
+};
+
 export const PROMPT_TEMPLATES: Record<PromptType, PromptTemplate> = {
   generate_skeleton: {
     system: (lang) => `你是一个专业的视频创意导演和编剧。你的任务是根据用户提供的主题，生成一个初步的视频骨架。
@@ -46,14 +54,14 @@ ${getLangInstruction(lang)}
     user: (input, lang) => `请为以下主题生成视频骨架：${input}`,
   },
   generate_storyboard: {
-    system: (lang) => `你是一个专业的视频分镜导演。你的任务是根据提供的视频骨架（故事概述、艺术风格、角色设计、场景设计），生成详细的分镜头脚本。
+    system: (lang) => `你是一个专业的视频分镜导演。你的任务是根据提供的“视频骨架”或“完整剧本文本”，生成详细的分镜头脚本；当输入为剧本文本时，剧本优先，不强制分集。
 ${getLangInstruction(lang)}
 
 每个镜头必须包含以下字段：
-- visualDescription: 视觉描述。详细描述画面内容，包括角色动作、环境细节、光影氛围等。
+- visualDescription: 视觉描述。必须是精细的动作控制，详细描述画面内容，包括角色动作（细微表情、肢体语言）、环境细节、光影氛围等。需要具备很丰富的想象力。
 - characterIds: 参与此镜头的角色 ID 列表（从提供的角色设计中选择）。
 - sceneId: 此镜头所处的场景 ID（从提供的场景设计中选择）。
-- cameraDesign: 镜头设计。包括镜头类型（如 Wide Shot）、运镜（如 Pan Right）、动作幅度、视点高度（如 Eye Level）、构图准则（如 Rule of Thirds）。
+- cameraDesign: 镜头设计。包括镜头类型（如 Wide Shot）、运镜（如 Pan Right）、动作幅度、视点高度（如 Eye Level）、构图准则（如 Rule of Thirds）。需要非常详细。
 - audioDesign: 音频设计。描述背景音效、环境音等。
 - voiceActor: 配音角色。必须从以下音色 ID 列表中选择最符合角色特征的音色 ID：
   - 湾区大叔: zh_female_wanqudashu_moon_bigtts
@@ -108,17 +116,18 @@ ${getLangInstruction(lang)}
   - 悬疑解说: zh_male_changtianyi_mars_bigtts
   如果角色是旁白，请根据故事氛围选择合适的解说音色（如解说小明、悬疑解说等）。
 
-- dialogueContent: 对白内容。具体的台词或旁白。不需要多余的词语解释，只需要直接输出对白内容。注意：必须严格使用${getLangName(lang)}。
-- duration: 建议持续时间（秒）。必须是 5 到 12 之间的整数。
+- dialogueContent: 对白内容。具体的台词或旁白。不需要多余的词语解释，只需要直接输出对白内容。注意：必须严格使用${getLangName(lang)}，并以 “${getDialogueLangHint(lang)}:” 作为开头提示词。
+- duration: 建议持续时间（秒）。**必须设置为 -1**，代表使用智能时长（自动）。
 
 重要：
-1. 视频总时长必须至少达到 60 秒。请生成 10-15 个镜头，并合理分配每个镜头的时长。
+1. 当输入为剧本时：按照剧本事件流自然划分镜头，镜头数量自适应，不强制固定数量；不强制分集，剧本优先。
 2. **注重分镜的连续性**：尽量减少一分钟内不必要的场景跳跃。如果同一场景内有连续动作，请保持场景 ID 不变，并通过 visualDescription 描述连续的动作变化，而不是频繁切换场景。
 3. 尽量使用长镜头（Long Take）或稳定的运镜来表现故事，避免过于细碎的剪辑。
+4. 若输入中包含“角色/场景”定义，则使用其 ID；若仅为剧本文本且缺少 ID，可临时为本次生成分配合理的 ID。
 
 输出必须是 JSON 格式的数组，每个元素代表一个镜头。
 请直接输出 JSON 内容。如果你需要提供额外的解释，请确保 JSON 内容被包裹在 \`\`\`json 和 \`\`\` 之间。`,
-    user: (input, lang) => `请根据以下视频骨架生成分镜头脚本：\n${input}`,
+    user: (input, lang) => `以下内容可能是“视频骨架 JSON”或“完整剧本文本”。请根据其类型生成分镜头脚本，剧本优先：\n${input}`,
   },
   chat_refine: {
     system: (lang) => `你是一个专业的视频创作助手。用户会向你提出关于视频骨架的修改建议，你需要以专业且富有启发性的口吻回答。
@@ -132,12 +141,12 @@ ${getLangInstruction(lang)}
 - artStyle: 艺术风格
 - characters: 角色列表 (id, prototype, description, imageUrl)
 - sceneDesigns: 场景设计列表 (id, prototype, description, imageUrl)
-- scenes: 分镜头列表 (id, visualDescription, characterIds, sceneId, cameraDesign, audioDesign, voiceActor, dialogueContent, duration, imageUrl)。注意：dialogueContent 必须严格使用${getLangName(lang)}。
+- scenes: 分镜头列表 (id, visualDescription, characterIds, sceneId, cameraDesign, audioDesign, voiceActor, dialogueContent, duration, imageUrl)。注意：dialogueContent 必须严格使用${getLangName(lang)}，并以 “${getDialogueLangHint(lang)}:” 作为开头提示词。
 
 注意：
 1. 如果用户只是进行普通咨询，不需要输出 JSON。
 2. 如果用户要求修改，请务必保持现有的 id 不变（除非是添加新项），并保留已有的 imageUrl。
-3. 如果用户要求“延长视频”或“增加时长”，请通过增加分镜头数量或合理增加单镜头时长来实现。注意单镜头 duration 必须是 4 到 12 之间的整数。
+3. 如果用户要求“延长视频”或“增加时长”，请通过增加分镜头数量来实现。注意单镜头 duration 必须保持为 -1 (智能时长)。
 4. JSON 内容必须包裹在 \`\`\`json 和 \`\`\` 之间。
 5. 在 JSON 之外，请简要说明你做了哪些修改。`,
     user: (input, lang) => input,
@@ -186,8 +195,8 @@ ${getLangInstruction(lang)}
 - scenes: 分镜头大纲列表。每个镜头包含：
   - id: 唯一标识 (建议使用 s_1, s_2 等)
   - action: 简短的剧情动作描述 (例如：林婉清走进咖啡厅，神色匆忙)
-  - dialogueContent: 对白内容 (如有)。注意：必须严格使用${getLangName(lang)}。
-  - duration: 建议时长 (秒)。必须是 5 到 12 之间的整数。
+  - dialogueContent: 对白内容 (如有)。注意：必须严格使用${getLangName(lang)}，并以 “${getDialogueLangHint(lang)}:” 作为开头提示词。
+  - duration: 建议时长 (秒)。**必须设置为 -1** (智能时长)。
   - characterIds: 参与此镜头的角色 ID 列表 (仅引用 ID)
   - sceneId: 此镜头所处的场景 ID (仅引用 ID)
 
@@ -205,8 +214,8 @@ ${getLangInstruction(lang)}
 ${getLangInstruction(lang)}
 
 你需要为每个镜头补充以下细节：
-- visualDescription: 详细的画面描述 Prompt (用于 AI 绘画)。结合艺术风格，描述光影、构图、角色动作和表情。**必须确保与上一镜头的视觉连续性**（例如：如果场景和角色相同，请保持他们的位置和状态连贯）。
-- cameraDesign: 镜头语言设计 (如 Close-up, Pan Right, Eye Level)。
+- visualDescription: 详细的画面描述 Prompt (用于 AI 绘画)。必须是精细的动作控制，结合艺术风格，描述光影、构图、角色动作（细微表情、肢体语言）和表情。**必须确保与上一镜头的视觉连续性**（例如：如果场景和角色相同，请保持他们的位置和状态连贯）。需要具备很丰富的想象力。
+- cameraDesign: 镜头语言设计 (如 Close-up, Pan Right, Eye Level)。需要非常详细。
 - audioDesign: 音效设计 (背景音、环境音)。
 - voiceActor: 为有对白的角色选择合适的音色 ID。
 
@@ -230,7 +239,7 @@ ${getLangInstruction(lang)}
 重要原则：
 1. **必须**优先使用“剧集圣经”中定义的角色 ID 和场景 ID，以保持系列的一致性。
 2. 如果剧情中出现了圣经中没有的新角色或新场景，请在本地定义它们。
-3. 请合理分配镜头时长，确保本集视频总时长至少达到 60 秒。建议单个镜头时长 5-12 秒，避免剪辑过快。
+3. 请合理分配镜头时长，确保本集视频总时长至少达到 60 秒。单镜头时长**必须使用 -1** (智能时长)，由模型自动决定。
 4. **注重连续性**：尽量减少一分钟内不必要的场景跳跃。
 5. 配音角色必须从标准音色库中选择（例如：zh_male_jieshuoxiaoming_moon_bigtts）。
 
@@ -245,14 +254,14 @@ ${getLangInstruction(lang)}
   - 对于圣经中的场景，请直接复制其完整信息。
   - 对于本集新场景，请创建新的定义。
 - scenes: 分镜头列表。每个镜头包含：
-  - visualDescription: 视觉描述。
+  - visualDescription: 视觉描述。必须是精细的动作控制，描述画面内容，包括角色动作、环境细节、光影氛围等。需要具备很丰富的想象力。
   - characterIds: 参与此镜头的角色 ID 列表。
   - sceneId: 此镜头所处的场景 ID。
-  - cameraDesign: 镜头设计。
+  - cameraDesign: 镜头设计。需要非常详细。
   - audioDesign: 音频设计。
   - voiceActor: 配音角色 ID。
-  - dialogueContent: 对白内容。注意：必须严格使用${getLangName(lang)}。
-  - duration: 建议时长（秒）。必须是 5 到 12 之间的整数。
+  - dialogueContent: 对白内容。注意：必须严格使用${getLangName(lang)}，并以 “${getDialogueLangHint(lang)}:” 作为开头提示词。
+  - duration: 建议时长（秒）。**必须设置为 -1** (智能时长)。
   
 请直接输出 JSON 内容。如果你需要提供额外的解释，请确保 JSON 内容被包裹在 \`\`\`json 和 \`\`\` 之间。`,
     user: (input, lang) => `请根据以下信息生成第 ${JSON.parse(input).index} 集的分镜头脚本：\n${input}`,

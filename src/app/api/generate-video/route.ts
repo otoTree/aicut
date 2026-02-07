@@ -15,18 +15,7 @@ export async function POST(req: Request) {
     }
 
     const body = await req.json();
-    const { prompt, imageUrl, lastImageUrl, model = ARK_VIDEO_MODEL, ...params } = body;
-
-    // Sanitize duration for Seedance 1.5 Pro
-    // Constraint: integer in [4, 12] or -1
-    if (model.includes('doubao-seedance-1-5-pro') && typeof params.duration === 'number') {
-      let duration = Math.round(params.duration);
-      if (duration !== -1) {
-        if (duration < 4) duration = 4;
-        if (duration > 12) duration = 12;
-      }
-      params.duration = duration;
-    }
+    const { prompt, imageUrl, lastImageUrl, model = ARK_VIDEO_MODEL, duration, ...params } = body;
 
     if (!imageUrl) {
       return NextResponse.json({ error: 'imageUrl is required for first-frame video generation' }, { status: 400 });
@@ -66,6 +55,7 @@ export async function POST(req: Request) {
       model,
       content,
       generate_audionew: true,
+      duration: duration ?? -1,
       ...params,
     };
 

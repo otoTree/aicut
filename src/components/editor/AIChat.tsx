@@ -86,8 +86,13 @@ export function AIChat() {
     const scenes = skeleton.scenes;
     for (let i = 0; i < scenes.length; i++) {
       const scene = scenes[i];
-      if (!scene.imageUrl) {
-        console.warn(`Scene ${i} has no image, skipping video generation.`);
+      
+      // Determine start image
+      const useStart = scene.useStartFrame !== false;
+      const startImage = useStart ? scene.imageUrl : undefined;
+      
+      if (useStart && !startImage) {
+        console.warn(`Scene ${i} missing start image, skipping.`);
         continue;
       }
 
@@ -104,15 +109,19 @@ export function AIChat() {
 
         // Determine lastImageUrl for continuity
         let lastImageUrl = undefined;
-        if (i < scenes.length - 1) {
-          const nextScene = scenes[i + 1];
-          if (nextScene && nextScene.imageUrl) {
-            lastImageUrl = nextScene.imageUrl;
-          }
+        
+        if (scene.useEndFrame && scene.endImageUrl) {
+          lastImageUrl = scene.endImageUrl;
         }
 
         const effectiveAspectRatio = skeleton.aspectRatio ?? aspectRatio;
-        const { id: taskId } = await llmClient.generateVideo(finalPrompt, scene.imageUrl, undefined, effectiveAspectRatio, lastImageUrl);
+
+        const { id: taskId } = await llmClient.generateVideo(
+            finalPrompt, 
+            startImage!, 
+            effectiveAspectRatio, 
+            lastImageUrl
+        );
         
         // 轮询状态
         let attempts = 0;
