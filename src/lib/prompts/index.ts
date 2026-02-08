@@ -1,7 +1,7 @@
 
 import { useStore } from '@/store/useStore';
 
-export type PromptType = 'generate_skeleton' | 'generate_storyboard' | 'chat_refine' | 'analyze_series_bible' | 'segment_episodes' | 'generate_episode_scenes' | 'generate_episode_script' | 'generate_scene_details';
+export type PromptType = 'generate_skeleton' | 'generate_storyboard' | 'chat_refine' | 'analyze_series_bible' | 'segment_episodes' | 'generate_episode_scenes' | 'generate_episode_script' | 'generate_scene_details' | 'parse_script_to_scenes';
 
 export interface PromptTemplate {
   system: (lang: string) => string;
@@ -54,14 +54,25 @@ ${getLangInstruction(lang)}
     user: (input, lang) => `请为以下主题生成视频骨架：${input}`,
   },
   generate_storyboard: {
-    system: (lang) => `你是一个专业的视频分镜导演。你的任务是根据提供的“视频骨架”或“完整剧本文本”，生成详细的分镜头脚本；当输入为剧本文本时，剧本优先，不强制分集。
+    system: (lang) => `你是一个专业的视频分镜导演。你的任务是根据提供的“视频骨架”或“完整剧本文本”，生成详细的分镜头脚本。
 ${getLangInstruction(lang)}
 
+我们将采用“P0-P1-P2”三层叙事生成法：
+1. **P0 (叙事因果层)**: 提取不可删减的故事主干。每个镜头必须包含“角色状态变化”和“因果触发”。
+2. **P1 (视觉推断层)**: 为了让观众看懂 P0，必须显性呈现的视觉线索（行为锚点、因果证据、情绪外化、时空连续性）。
+3. **P2 (表现风格层)**: 基于 P1，结合艺术风格，生成最终的画面描述。
+
+注意：输入的剧本通常只包含对话和简单的动作描述，**不包含**深层的 P0/P1 逻辑。
+**你必须自己推理并补全 P0 和 P1 层。**
+不要只是翻译剧本，要深入理解每个镜头的叙事目的。
+
 每个镜头必须包含以下字段：
-- visualDescription: 视觉描述。必须是精细的动作控制，详细描述画面内容，包括角色动作（细微表情、肢体语言）、环境细节、光影氛围等。需要具备很丰富的想象力。
+- narrativeFunction: **P0 层分析**。描述此镜头的叙事功能。格式：“[角色] 从 [原状态] 变为 [新状态]，因为 [原因]”。
+- visualInference: **P1 层推断**。列出视觉线索。格式：“行为：...；证据：...；情绪：...；”。
+- visualDescription: **P2 层最终描述**。基于 P0 和 P1，结合艺术风格生成的详细画面 Prompt。必须是精细的动作控制，详细描述画面内容，包括角色动作（细微表情、肢体语言）、环境细节、光影氛围等。
 - characterIds: 参与此镜头的角色 ID 列表（从提供的角色设计中选择）。
 - sceneId: 此镜头所处的场景 ID（从提供的场景设计中选择）。
-- cameraDesign: 镜头设计。包括镜头类型（如 Wide Shot）、运镜（如 Pan Right）、动作幅度、视点高度（如 Eye Level）、构图准则（如 Rule of Thirds）。需要非常详细。
+- cameraDesign: 镜头设计。包括镜头类型（如 Wide Shot）、运镜（如 Pan Right）、动作幅度、视点高度（如 Eye Level）、构图准则（如 Rule of Thirds）。
 - audioDesign: 音频设计。描述背景音效、环境音等。
 - voiceActor: 配音角色。必须从以下音色 ID 列表中选择最符合角色特征的音色 ID：
   - 湾区大叔: zh_female_wanqudashu_moon_bigtts
@@ -124,6 +135,7 @@ ${getLangInstruction(lang)}
 2. **注重分镜的连续性**：尽量减少一分钟内不必要的场景跳跃。如果同一场景内有连续动作，请保持场景 ID 不变，并通过 visualDescription 描述连续的动作变化，而不是频繁切换场景。
 3. 尽量使用长镜头（Long Take）或稳定的运镜来表现故事，避免过于细碎的剪辑。
 4. 若输入中包含“角色/场景”定义，则使用其 ID；若仅为剧本文本且缺少 ID，可临时为本次生成分配合理的 ID。
+5. **请务必先思考 P0 和 P1，再生成 visualDescription (P2)。画面必须能够让观众推断出 P0 的因果逻辑。**
 
 输出必须是 JSON 格式的数组，每个元素代表一个镜头。
 请直接输出 JSON 内容。如果你需要提供额外的解释，请确保 JSON 内容被包裹在 \`\`\`json 和 \`\`\` 之间。`,
@@ -141,7 +153,7 @@ ${getLangInstruction(lang)}
 - artStyle: 艺术风格
 - characters: 角色列表 (id, prototype, description, imageUrl)
 - sceneDesigns: 场景设计列表 (id, prototype, description, imageUrl)
-- scenes: 分镜头列表 (id, visualDescription, characterIds, sceneId, cameraDesign, audioDesign, voiceActor, dialogueContent, duration, imageUrl)。注意：dialogueContent 必须严格使用${getLangName(lang)}，并以 “${getDialogueLangHint(lang)}:” 作为开头提示词。
+- scenes: 分镜头列表 (id, visualDescription, narrativeFunction, visualInference, characterIds, sceneId, cameraDesign, audioDesign, voiceActor, dialogueContent, duration, imageUrl)。注意：dialogueContent 必须严格使用${getLangName(lang)}，并以 “${getDialogueLangHint(lang)}:” 作为开头提示词。
 
 注意：
 1. 如果用户只是进行普通咨询，不需要输出 JSON。
@@ -183,6 +195,29 @@ ${getLangInstruction(lang)}
 请直接输出 JSON 内容。如果你需要提供额外的解释，请确保 JSON 内容被包裹在 \`\`\`json 和 \`\`\` 之间。`,
     user: (input, lang) => `请将以下小说切分为 10 个剧集：\n${input}`,
   },
+  parse_script_to_scenes: {
+    system: (lang) => `你是一个专业的剧本分析师。你的任务是将上传的剧本文本拆解为一个个独立的镜头（Scenes/Shots）。
+${getLangInstruction(lang)}
+
+你的目标是构建分镜的大纲结构，提取每个镜头的核心动作和对白。不要生成视觉描述、镜头参数等细节。
+
+输出必须是 JSON 格式，包含以下字段：
+- theme: 剧本的主题或标题
+- storyOverview: 剧本的简要故事梗概
+- scenes: 分镜头列表。每个镜头包含：
+  - id: 唯一标识 (例如 s_1)
+  - action: 剧情动作摘要
+  - dialogueContent: 对白内容。注意：必须严格使用${getLangName(lang)}，并以 “${getDialogueLangHint(lang)}:” 作为开头提示词。
+  - characterIds: 参与此镜头的角色 ID 列表 (仅提取名字)
+  - sceneId: 此镜头所处的场景名称
+  - originalScript: 该镜头的原始剧本文本片段
+
+重要：
+1. 请根据剧本的自然段落或事件转换来划分镜头。
+2. 确保不遗漏任何剧情。
+3. 请直接输出 JSON 内容。`,
+    user: (input, lang) => `请将以下剧本拆解为分镜头大纲：\n${input}`,
+  },
   generate_episode_script: {
     system: (lang) => `你是一个专业的编剧。你的任务是根据提供的剧情摘要和剧集圣经，为这一集创作详细的分镜头大纲（Script Outline）。
 ${getLangInstruction(lang)}
@@ -213,8 +248,15 @@ ${getLangInstruction(lang)}
     system: (lang) => `你是一个专业的视觉导演和音效师。你的任务是根据提供的分镜头大纲和艺术风格，补充详细的视觉和听觉设计。
 ${getLangInstruction(lang)}
 
+我们将采用“P0-P1-P2”三层叙事生成法：
+1. **P0 (叙事因果层)**: 提取不可删减的故事主干。每个镜头必须包含“角色状态变化”和“因果触发”。
+2. **P1 (视觉推断层)**: 为了让观众看懂 P0，必须显性呈现的视觉线索（行为锚点、因果证据、情绪外化、时空连续性）。
+3. **P2 (表现风格层)**: 基于 P1，结合艺术风格，生成最终的画面描述。
+
 你需要为每个镜头补充以下细节：
-- visualDescription: 详细的画面描述 Prompt (用于 AI 绘画)。必须是精细的动作控制，结合艺术风格，描述光影、构图、角色动作（细微表情、肢体语言）和表情。**必须确保与上一镜头的视觉连续性**（例如：如果场景和角色相同，请保持他们的位置和状态连贯）。需要具备很丰富的想象力。
+- narrativeFunction: **P0 层分析**。描述此镜头的叙事功能。格式：“[角色] 从 [原状态] 变为 [新状态]，因为 [原因]”。
+- visualInference: **P1 层推断**。列出视觉线索。格式：“行为：...；证据：...；情绪：...；”。
+- visualDescription: **P2 层最终描述**。详细的画面描述 Prompt (用于 AI 绘画)。必须是精细的动作控制，结合艺术风格，描述光影、构图、角色动作（细微表情、肢体语言）和表情。**必须确保与上一镜头的视觉连续性**（例如：如果场景和角色相同，请保持他们的位置和状态连贯）。需要具备很丰富的想象力。
 - cameraDesign: 镜头语言设计 (如 Close-up, Pan Right, Eye Level)。需要非常详细。
 - audioDesign: 音效设计 (背景音、环境音)。
 - voiceActor: 为有对白的角色选择合适的音色 ID。

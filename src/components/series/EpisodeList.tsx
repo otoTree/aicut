@@ -51,128 +51,283 @@ export function EpisodeList() {
     const toastId = toast.loading('正在生成分镜，这可能需要一分钟左右...');
 
     try {
-      // Step 1: Generate Script Outline (Macro)
-      const input = JSON.stringify({
-        index: episode.index,
-        title: episode.title,
-        summary: episode.summary,
-        bible: {
-          artStyle: seriesBible.artStyle,
-          characters: seriesBible.characters,
-          sceneDesigns: seriesBible.sceneDesigns
-        }
-      });
-      
-      const prompt = PromptFactory.getPrompt('generate_episode_script', input);
-      
-      const response = await llmClient.chat([
-        { role: 'system', content: prompt.system },
-        { role: 'user', content: prompt.user }
-      ]);
+      let scenes: any[] = [];
+      let skeletonData: VideoSkeleton;
 
-      console.log('Script Outline Response Length:', response.content.length);
+      if (episode.scriptContent) {
+         toast.message('正在解析剧本结构...', { id: toastId });
+         
+         // Step 1: Macro - Parse Script to Scenes
+         const prompt = PromptFactory.getPrompt('parse_script_to_scenes', episode.scriptContent);
+         const response = await llmClient.chat([
+             { role: 'system', content: prompt.system },
+             { role: 'user', content: prompt.user }
+         ]);
+         
+         const scriptData = extractJSON<any>(response.content);
+         
+         // Initial Skeleton Construction
+         const initialScenes = scriptData.scenes.map((s: any) => ({
+             ...s,
+             visualDescription: s.action || '', 
+             cameraDesign: 'Medium Shot',
+             audioDesign: 'Ambient sound',
+             voiceActor: '',
+             imageUrl: '',
+             videoUrl: '',
+             audioUrl: '',
+             duration: -1
+         }));
+         
+         // Initialize Tracks
+         let elapsed = 0;
+         const initialTracks = [{
+             id: 'main-track',
+             name: 'Track 1',
+             clips: initialScenes.map((s: any) => {
+                 const dur = 5;
+                 const clip = {
+                     id: `v-${s.id}`,
+                     type: 'video' as const,
+                     startTime: elapsed,
+                     duration: dur,
+                     content: s.visualDescription,
+                     sceneId: s.id,
+                     imageUrl: ''
+                 };
+                 elapsed += dur;
+                 return clip;
+             })
+         }];
+         
+         skeletonData = {
+             theme: scriptData.theme || episode.title,
+             storyOverview: scriptData.storyOverview || episode.summary,
+             artStyle: seriesBible.artStyle,
+             aspectRatio: aspectRatio,
+             characters: seriesBible.characters,
+             sceneDesigns: seriesBible.sceneDesigns,
+             scenes: initialScenes,
+             tracks: initialTracks
+         };
+         
+         updateEpisodeSkeleton(episodeId, skeletonData);
+         setSkeleton(skeletonData);
+         setEpisodes(episodes.map(e => 
+             e.id === episodeId ? { ...e, status: 'generated', skeletonId: episodeId } : e
+         ));
+         
+         toast.success('剧本结构解析完成，正在补充视觉细节...', { id: toastId });
 
-      let scriptData: any;
-      try {
-        scriptData = extractJSON<any>(response.content);
-      } catch (parseError) {
-        console.error('Script Parse Error:', parseError);
-        throw new Error('分镜大纲解析失败');
-      }
+         // Step 2: Micro - Auto-fill Details (Batch Process)
+         const BATCH_SIZE = 5;
+         scenes = [...initialScenes];
+         
+         for (let i = 0; i < scenes.length; i += BATCH_SIZE) {
+             const batch = scenes.slice(i, i + BATCH_SIZE);
+             const batchInput = JSON.stringify({
+                 bible: { artStyle: seriesBible.artStyle },
+                 scenes: batch.map(s => ({
+                     id: s.id,
+                     action: s.visualDescription || s.action, // Pass the core action
+                     dialogueContent: s.dialogueContent
+                 })),
+                 previousScene: i > 0 ? scenes[i - 1] : undefined
+             });
+             
+             try {
+                 const detailPrompt = PromptFactory.getPrompt('generate_scene_details', batchInput);
+                 const detailResponse = await llmClient.chat([
+                     { role: 'system', content: detailPrompt.system },
+                     { role: 'user', content: detailPrompt.user }
+                 ]);
+                 
+                 const updatedBatch = extractJSON<any[]>(detailResponse.content);
+                 
+                 if (Array.isArray(updatedBatch)) {
+                     updatedBatch.forEach((updatedScene, idx) => {
+                         if (i + idx < scenes.length) {
+                             // Merge new P0/P1/P2 data while preserving structure
+                             scenes[i + idx] = { 
+                                 ...scenes[i + idx], 
+                                 ...updatedScene,
+                                 // Explicitly ensure these fields are captured
+                                 narrativeFunction: updatedScene.narrativeFunction || scenes[i + idx].narrativeFunction,
+                                 visualInference: updatedScene.visualInference || scenes[i + idx].visualInference
+                             };
+                         }
+                     });
+                     
+                     // Live update
+                     const currentSkeleton = { ...skeletonData, scenes: [...scenes] };
+                     updateEpisodeSkeleton(episodeId, currentSkeleton);
+                     setSkeleton(currentSkeleton);
+                 }
+             } catch (e) {
+                 console.error(`Batch ${i/BATCH_SIZE + 1} details generation failed`, e);
+             }
+         }
+         
+         // Generate Missing Bible Images (Consistency)
+         const charactersToGen = seriesBible.characters.filter(c => !c.imageUrl);
+         const scenesToGen = seriesBible.sceneDesigns.filter(s => !s.imageUrl);
 
-      // Initial Skeleton Construction
-      // We fill in missing visual/audio details with placeholders for now
-      const initialScenes = scriptData.scenes.map((s: any) => ({
-        ...s,
-        visualDescription: s.action, // Temporary fallback
-        cameraDesign: 'Medium Shot',
-        audioDesign: 'Ambient sound',
-        voiceActor: '',
-        imageUrl: '',
-        videoUrl: '',
-        audioUrl: ''
-      }));
+         if (charactersToGen.length > 0 || scenesToGen.length > 0) {
+            toast.message('正在生成角色立绘和场景底图以保持一致性...', { id: toastId });
+            
+            // Generate Characters
+            for (const char of charactersToGen) {
+               try {
+                  const prompt = `艺术风格：${seriesBible.artStyle}。角色描述：${char.description}。画面要求：全身站立，无动作，纯白背景，无背景，仅角色，高质量，杰作，原创设计。Safe for work, avoid copyright.`;
+                  const response = await llmClient.generateImage(prompt, '1728x2304');
+                  
+                  // Update Bible and Skeleton
+                  const newChar = { ...char, imageUrl: response.url };
+                  seriesBible.characters = seriesBible.characters.map(c => c.id === char.id ? newChar : c);
+                  skeletonData.characters = skeletonData.characters.map(c => c.id === char.id ? newChar : c);
+               } catch (e) {
+                  console.error('Failed to generate character image:', e);
+               }
+            }
 
-      // Initialize Tracks
-      let elapsed = 0;
-      const initialTracks = [{
-         id: 'main-track',
-         name: 'Track 1',
-         clips: initialScenes.map((s: any) => {
-            // Default to 5s for preview if duration is smart (-1)
-            const dur = (s.duration && s.duration > 0) ? s.duration : 5;
-            const clip = {
-               id: `v-${s.id}`,
-               type: 'video' as const,
-               startTime: elapsed,
-               duration: dur,
-               content: s.visualDescription,
-               sceneId: s.id,
-               imageUrl: ''
-            };
-            elapsed += dur;
-            return clip;
-         })
-      }];
-
-      const skeletonData: VideoSkeleton = {
-        theme: scriptData.theme,
-        storyOverview: scriptData.storyOverview,
-        artStyle: seriesBible.artStyle,
-        aspectRatio: aspectRatio,
-        characters: seriesBible.characters,
-        sceneDesigns: seriesBible.sceneDesigns,
-        scenes: initialScenes,
-        tracks: initialTracks
-      };
-
-      // Immediate Update to UI (One-click feedback)
-      updateEpisodeSkeleton(episodeId, skeletonData);
-      setSkeleton(skeletonData);
-      setEpisodes(episodes.map(e => 
-        e.id === episodeId ? { ...e, status: 'generated', skeletonId: episodeId } : e
-      ));
-      
-      toast.success('大纲生成完成，正在补充视觉细节...', { id: toastId });
-
-      // Step 2: Auto-fill Details (Micro) - Batch Process
-      // We process scenes in batches of 5 to avoid token limits
-      const BATCH_SIZE = 5;
-      const scenes = [...initialScenes];
-      
-      for (let i = 0; i < scenes.length; i += BATCH_SIZE) {
-        const batch = scenes.slice(i, i + BATCH_SIZE);
-        const batchInput = JSON.stringify({
-          bible: { artStyle: seriesBible.artStyle },
-          scenes: batch,
-          previousScene: i > 0 ? scenes[i - 1] : undefined
+            // Generate Scene Designs
+            for (const scene of scenesToGen) {
+               try {
+                  const prompt = `艺术风格：${seriesBible.artStyle}。场景描述：${scene.description}。画面要求：无角色，空场景，仅背景，高质量，杰作，原创设计。Safe for work, avoid copyright.`;
+                  const response = await llmClient.generateImage(prompt, getResolution(aspectRatio));
+                  
+                  // Update Bible and Skeleton
+                  const newScene = { ...scene, imageUrl: response.url };
+                  seriesBible.sceneDesigns = seriesBible.sceneDesigns.map(s => s.id === scene.id ? newScene : s);
+                  skeletonData.sceneDesigns = skeletonData.sceneDesigns.map(s => s.id === scene.id ? newScene : s);
+               } catch (e) {
+                  console.error('Failed to generate scene design image:', e);
+               }
+            }
+            
+            // Sync updates
+            useStore.getState().setSeriesBible({ ...seriesBible });
+            updateEpisodeSkeleton(episodeId, { ...skeletonData });
+            setSkeleton({ ...skeletonData });
+         }
+      } else {
+        // Step 1: Generate Script Outline (Macro)
+        const input = JSON.stringify({
+          index: episode.index,
+          title: episode.title,
+          summary: episode.summary,
+          bible: {
+            artStyle: seriesBible.artStyle,
+            characters: seriesBible.characters,
+            sceneDesigns: seriesBible.sceneDesigns
+          }
         });
         
+        const prompt = PromptFactory.getPrompt('generate_episode_script', input);
+        
+        const response = await llmClient.chat([
+          { role: 'system', content: prompt.system },
+          { role: 'user', content: prompt.user }
+        ]);
+  
+        console.log('Script Outline Response Length:', response.content.length);
+  
+        let scriptData: any;
         try {
-          const detailPrompt = PromptFactory.getPrompt('generate_scene_details', batchInput);
-          const detailResponse = await llmClient.chat([
-            { role: 'system', content: detailPrompt.system },
-            { role: 'user', content: detailPrompt.user }
-          ]);
+          scriptData = extractJSON<any>(response.content);
+        } catch (parseError) {
+          console.error('Script Parse Error:', parseError);
+          throw new Error('分镜大纲解析失败');
+        }
+  
+        // Initial Skeleton Construction
+        const initialScenes = scriptData.scenes.map((s: any) => ({
+          ...s,
+          visualDescription: s.action, // Temporary fallback
+          cameraDesign: 'Medium Shot',
+          audioDesign: 'Ambient sound',
+          voiceActor: '',
+          imageUrl: '',
+          videoUrl: '',
+          audioUrl: ''
+        }));
+  
+        // Initialize Tracks
+        let elapsed = 0;
+        const initialTracks = [{
+           id: 'main-track',
+           name: 'Track 1',
+           clips: initialScenes.map((s: any) => {
+              const dur = (s.duration && s.duration > 0) ? s.duration : 5;
+              const clip = {
+                 id: `v-${s.id}`,
+                 type: 'video' as const,
+                 startTime: elapsed,
+                 duration: dur,
+                 content: s.visualDescription,
+                 sceneId: s.id,
+                 imageUrl: ''
+              };
+              elapsed += dur;
+              return clip;
+           })
+        }];
+  
+        skeletonData = {
+          theme: scriptData.theme,
+          storyOverview: scriptData.storyOverview,
+          artStyle: seriesBible.artStyle,
+          aspectRatio: aspectRatio,
+          characters: seriesBible.characters,
+          sceneDesigns: seriesBible.sceneDesigns,
+          scenes: initialScenes,
+          tracks: initialTracks
+        };
+  
+        // Immediate Update to UI (One-click feedback)
+        updateEpisodeSkeleton(episodeId, skeletonData);
+        setSkeleton(skeletonData);
+        setEpisodes(episodes.map(e => 
+          e.id === episodeId ? { ...e, status: 'generated', skeletonId: episodeId } : e
+        ));
+        
+        toast.success('大纲生成完成，正在补充视觉细节...', { id: toastId });
+  
+        // Step 2: Auto-fill Details (Micro) - Batch Process
+        const BATCH_SIZE = 5;
+        scenes = [...initialScenes];
+        
+        for (let i = 0; i < scenes.length; i += BATCH_SIZE) {
+          const batch = scenes.slice(i, i + BATCH_SIZE);
+          const batchInput = JSON.stringify({
+            bible: { artStyle: seriesBible.artStyle },
+            scenes: batch,
+            previousScene: i > 0 ? scenes[i - 1] : undefined
+          });
           
-          const updatedBatch = extractJSON<any[]>(detailResponse.content);
-          
-          if (Array.isArray(updatedBatch)) {
-            // Update scenes array
-            updatedBatch.forEach((updatedScene, idx) => {
-              if (i + idx < scenes.length) {
-                scenes[i + idx] = { ...scenes[i + idx], ...updatedScene };
-              }
-            });
+          try {
+            const detailPrompt = PromptFactory.getPrompt('generate_scene_details', batchInput);
+            const detailResponse = await llmClient.chat([
+              { role: 'system', content: detailPrompt.system },
+              { role: 'user', content: detailPrompt.user }
+            ]);
             
-            // Incremental Update to Store
-            const currentSkeleton = { ...skeletonData, scenes: [...scenes] };
-            updateEpisodeSkeleton(episodeId, currentSkeleton);
-            setSkeleton(currentSkeleton); // Update view if currently selected
+            const updatedBatch = extractJSON<any[]>(detailResponse.content);
+            
+            if (Array.isArray(updatedBatch)) {
+              updatedBatch.forEach((updatedScene, idx) => {
+                if (i + idx < scenes.length) {
+                  scenes[i + idx] = { ...scenes[i + idx], ...updatedScene };
+                }
+              });
+              
+              const currentSkeleton = { ...skeletonData, scenes: [...scenes] };
+              updateEpisodeSkeleton(episodeId, currentSkeleton);
+              setSkeleton(currentSkeleton);
+            }
+          } catch (e) {
+            console.error(`Batch ${i/BATCH_SIZE + 1} details generation failed`, e);
           }
-        } catch (e) {
-          console.error(`Batch ${i/BATCH_SIZE + 1} details generation failed`, e);
-          // Continue to next batch even if one fails
         }
       }
 
@@ -200,15 +355,20 @@ export function EpisodeList() {
 
         try {
           // Construct prompt
-          const sceneCharacters = seriesBible.characters.filter(c => scene.characterIds?.includes(c.id));
-          const sceneBaseDesign = seriesBible.sceneDesigns.find(sd => sd.id === scene.sceneId);
+          // Re-fetch bible to ensure we have latest image urls
+          const currentBible = useStore.getState().seriesBible;
+          if (!currentBible) return;
+
+          const sceneCharacters = currentBible.characters.filter(c => scene.characterIds?.includes(c.id));
+          const sceneBaseDesign = currentBible.sceneDesigns.find(sd => sd.id === scene.sceneId);
 
           const referenceImages = [
             ...sceneCharacters.map(c => c.imageUrl).filter((url): url is string => !!url),
             ...(sceneBaseDesign?.imageUrl ? [sceneBaseDesign.imageUrl] : [])
           ];
 
-          let prompt = `艺术风格：${seriesBible.artStyle}。`;
+          let prompt = `艺术风格：${currentBible.artStyle}。`;
+          // Use P2 description if available, otherwise fallback
           prompt += `画面描述：${scene.visualDescription}。`;
           if (scene.cameraDesign) prompt += ` 镜头语言：${scene.cameraDesign}。`;
           prompt += ` 高质量，电影感，8k分辨率。`;

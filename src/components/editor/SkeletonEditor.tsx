@@ -93,7 +93,10 @@ export function SkeletonEditor() {
       audioRestored.current = true;
     };
     
-    restoreAudio();
+    // Safety check for db.assets access
+    if (db && db.assets) {
+        restoreAudio();
+    }
   }, [skeleton, setSkeleton]); // Run when skeleton loads or changes
 
   useEffect(() => {
@@ -941,8 +944,35 @@ ${imageRefPrompts}
                         <div className="flex-1 space-y-4">
                           <div className="flex items-start justify-between">
                             <div className="flex-1 space-y-4">
+                              
+                              {/* P0 & P1 Layers */}
+                              <div className="grid grid-cols-1 gap-4 bg-black/[0.01] p-3 rounded-xl border border-black/[0.02]">
+                                <div className="space-y-2">
+                                  <label className="text-[10px] uppercase tracking-[0.2em] text-black/30 font-medium flex items-center gap-2">
+                                    P0 · 叙事因果 (Narrative Causality)
+                                  </label>
+                                  <Textarea
+                                    value={scene.narrativeFunction || ''}
+                                    onChange={(e) => updateScene(scene.id, { narrativeFunction: e.target.value })}
+                                    placeholder="描述角色状态变化与因果 (因为A，所以B)..."
+                                    className="min-h-[40px] border-none bg-white focus-visible:ring-0 text-xs leading-relaxed p-3 resize-none rounded-lg text-black/70 shadow-sm"
+                                  />
+                                </div>
+                                <div className="space-y-2">
+                                  <label className="text-[10px] uppercase tracking-[0.2em] text-black/30 font-medium flex items-center gap-2">
+                                    P1 · 视觉推断 (Visual Inference)
+                                  </label>
+                                  <Textarea
+                                    value={scene.visualInference || ''}
+                                    onChange={(e) => updateScene(scene.id, { visualInference: e.target.value })}
+                                    placeholder="视觉线索 (行为、证据、情绪)..."
+                                    className="min-h-[40px] border-none bg-white focus-visible:ring-0 text-xs leading-relaxed p-3 resize-none rounded-lg text-black/70 shadow-sm"
+                                  />
+                                </div>
+                              </div>
+
                               <div className="space-y-2">
-                                <label className="text-[10px] uppercase tracking-[0.2em] text-black/40 font-medium">视觉描述</label>
+                                <label className="text-[10px] uppercase tracking-[0.2em] text-black/40 font-medium">P2 · 视觉描述 (Visual Description)</label>
                                 <Textarea
                                   value={scene.visualDescription}
                                   onChange={(e) => updateScene(scene.id, { visualDescription: e.target.value })}

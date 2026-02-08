@@ -19,6 +19,10 @@ export interface Scene {
   endImageUrl?: string; // Optional end frame
   useStartFrame?: boolean; // Whether to use start frame (imageUrl) for video generation. Default: true
   useEndFrame?: boolean;   // Whether to use end frame (endImageUrl) for video generation. Default: false
+
+  // P0 & P1 Layers (Narrative Engine)
+  narrativeFunction?: string; // P0: Narrative Causality (State Change + Cause)
+  visualInference?: string;   // P1: Visual Inference (Action, Evidence, Emotion, Continuity)
 }
 
 export interface Character {
@@ -50,6 +54,7 @@ export interface EpisodeSummary {
   summary: string; // Plot for this episode
   status: 'pending' | 'generated';
   skeletonId?: string; // Link to the full VideoSkeleton
+  scriptContent?: string; // Optional: Full script content if provided
 }
 
 export type AspectRatio = '16:9' | '9:16' | '1:1' | '4:3' | '3:4';
